@@ -1,0 +1,118 @@
+Metadata-Version: 2.4
+Name: autonomous-ml-toolkit
+Version: 0.1.0
+Summary: Autonomous Classification and Heatmap Generation Toolkit
+License: MIT
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: pydantic>=2.0
+Requires-Dist: pyyaml>=6.0
+Requires-Dist: numpy>=1.24
+Requires-Dist: pandas>=2.0
+Requires-Dist: scikit-learn>=1.3
+Requires-Dist: scipy>=1.11
+Requires-Dist: imbalanced-learn>=0.11
+Requires-Dist: xgboost>=2.0
+Requires-Dist: torch>=2.0
+Requires-Dist: torchvision>=0.15
+Requires-Dist: timm>=0.9
+Requires-Dist: matplotlib>=3.7
+Requires-Dist: shap>=0.42
+Requires-Dist: typer>=0.9
+Requires-Dist: rich>=13.0
+Requires-Dist: joblib>=1.3
+Provides-Extra: dev
+Requires-Dist: pytest>=7.4; extra == "dev"
+Requires-Dist: pytest-cov>=4.1; extra == "dev"
+
+# Vellum
+
+Vellum is the project repository for the **Autonomous Classification and Heatmap Generation Toolkit**.
+
+The Python package is named `autonomous_ml_toolkit` (import alias: `aml_toolkit`).
+
+## What This Toolkit Does
+
+A modular, policy-driven machine learning toolkit that autonomously handles classification and heatmap generation tasks. Given a dataset, it:
+
+1. Ingests tabular, image, or embedding-based data
+2. Validates schema and split integrity (leakage checks, class absence, augmentation isolation)
+3. Profiles data health: class imbalance, duplicates, label conflicts, OOD shift
+4. Runs low-cost probe models to estimate learnability and intervention sensitivity
+5. Plans interventions (weighting, resampling, augmentation) based on evidence
+6. Trains candidate models with safe runtime decisions (warm-up gates, early stopping, resource abstention)
+7. Calibrates outputs and optimizes decision thresholds
+8. Selectively builds ensembles only when evidence justifies them
+9. Generates explainability artifacts and heatmaps with faithfulness checks
+10. Produces full audit logs and reports for every decision made
+
+## Supported Modalities
+
+- **Tabular**: CSV datasets with feature columns and a target column
+- **Image**: Folder-based image classification (class-per-folder structure)
+- **Embedding**: Pre-computed embedding matrices with associated labels
+
+## Supported Task Types
+
+- Binary classification
+- Multiclass classification
+- Multilabel classification
+
+## Operating Modes
+
+The toolkit supports four operating modes, each adjusting thresholds and policies:
+
+- **Conservative**: Prioritizes safety, thorough validation, and interpretability
+- **Balanced**: Default mode balancing thoroughness with compute efficiency
+- **Aggressive**: Maximizes model performance, allows wider candidate pools
+- **Interpretable**: Restricts to inherently interpretable models and explanations
+
+## Package Structure
+
+```
+autonomous_ml_toolkit/
+  pyproject.toml
+  configs/
+    default.yaml
+    modes/ (conservative, balanced, aggressive, interpretable)
+  src/
+    aml_toolkit/
+      core/        — config, enums, exceptions, logging, seeds
+      artifacts/   — typed, serializable data objects for every pipeline stage
+      interfaces/  — protocols/ABCs for all pluggable components
+      intake/      — schema parsing, modality/task detection, split building
+      audit/       — split auditing, leakage checks, augmentation guard
+      profiling/   — class distribution, duplicates, label conflicts, OOD
+      probes/      — baseline and shallow diagnostic models
+      interventions/ — weighting, resampling, augmentation planning
+      models/      — model registry and adapters (tabular, image, embedding)
+      runtime/     — warm-up policies, metric tracking, runtime decisions
+      postprocessing/ — calibration, threshold optimization, ensemble building
+      explainability/ — tabular explanations, image heatmaps, faithfulness
+      reporting/   — audit logging, report building, visualizations
+      orchestration/ — policy engine, orchestrator, state machine
+      utils/       — serialization, IO, metrics, resource guard
+      api/         — CLI entrypoint, optional service stub
+  tests/
+    unit/
+    integration/
+    fixtures/
+  examples/
+    tabular_demo/
+    image_demo/
+```
+
+## Installation
+
+> Installation instructions will be added in Phase 1 when `pyproject.toml` is created.
+
+## Usage
+
+> CLI usage instructions will be added in Phase 14 when the CLI entrypoint is implemented.
+
+## Documents
+
+- `plan.md` — Phase-by-phase execution playbook for building the toolkit
+- `system_design.md` — System architecture, component design, and data flow
+- `CONTRIBUTING.md` — Coding conventions, naming rules, and development guidelines
+- `ARTIFACTS.md` — Artifact directory conventions and output standards

@@ -1,0 +1,317 @@
+"""Pipeline orchestrator: wires all stages in the correct order."""
+
+import logging
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import pandas as pd
+
+from aml_toolkit.artifacts import FinalReport
+from aml_toolkit.core.config import ToolkitConfig
+from aml_toolkit.core.enums import AbstentionReason, ModalityType, PipelineStage
+from aml_toolkit.core.exceptions import SplitIntegrityError
+from aml_toolkit.core.paths import create_run_directory, generate_run_id
+from aml_toolkit.orchestration.audit_logger import AuditLogger
+from aml_toolkit.orchestration.state_machine import PipelineStateMachine
+from aml_toolkit.reporting.report_builder import build_report
+
+logger = logging.getLogger("aml_toolkit")
+
+
+class PipelineOrchestrator:
+    """Orchestrates the full pipeline, enforcing stage order via state machine.
+
+    Each stage method advances the state machine, collects artifacts,
+    and logs audit events. On failure, the orchestrator transitions to
+    ABSTAINED with the appropriate reason.
+    """
+
+    def __init__(self, config: ToolkitConfig) -> None:
+        self.config = config
+        self.state = PipelineStateMachine()
+        self.audit = AuditLogger()
+        self.artifacts: dict[str, Any] = {}
+        self._run_id: str = ""
+        self._run_dir: Path | None = None
+
+    @property
+    def run_id(self) -> str:
+        return self._run_id
+
+    @property
+    def run_dir(self) -> Path | None:
+        return self._run_dir
+
+    def run(self, dataset_path: str | Path) -> FinalReport:
+        """Execute the full pipeline end-to-end.
+
+        Args:
+            dataset_path: Path to the input dataset.
+
+        Returns:
+            FinalReport summarizing the run.
+        """
+        self._run_id = generate_run_id(
+            config_repr=self.config.model_dump_json(),
+            dataset_path=str(dataset_path),
+        )
+        output_base = Path(self.config.reporting.output_dir)
+        self._run_dir = create_run_directory(self._run_id, output_base)
+        self.artifacts["run_id"] = self._run_id
+
+        self.audit.log("INIT", "pipeline_start", {"run_id": self._run_id, "dataset": str(dataset_path)})
+
+        try:
+            self._stage_intake(dataset_path)
+            self._stage_profiling()
+            self._stage_probes()
+            self._stage_interventions()
+            self._stage_training()
+            self._stage_calibration()
+            self._stage_ensemble()
+            self._stage_explainability()
+            self._finalize()
+        except Exception as e:
+            if not self.state.is_terminal:
+                logger.error(f"Pipeline failed at {self.state.current.value}: {e}")
+                self.audit.log(self.state.current.value, "critical_failure", {"error": str(e)})
+                self.state.abstain(AbstentionReason.CRITICAL_FAILURE)
+                self.artifacts["final_status"] = PipelineStage.ABSTAINED
+                self.artifacts["abstention_reason"] = AbstentionReason.CRITICAL_FAILURE
+                self.artifacts["warnings"] = self.artifacts.get("warnings", []) + [str(e)]
+
+        # Build report
+        self.artifacts["stages_completed"] = self.state.history
+        report = build_report(self.artifacts, self._run_dir / "reporting", self.config)
+
+        # Save audit log
+        self.audit.save(self._run_dir / "logs" / "audit_log.json")
+
+        return report
+
+    # ------------------------------------------------------------------
+    # Stage implementations
+    # ------------------------------------------------------------------
+
+    def _stage_intake(self, dataset_path: str | Path) -> None:
+        from aml_toolkit.intake.dataset_intake_manager import run_intake
+
+        self.audit.log("INIT", "intake_start")
+
+        # Set dataset path in config for intake
+        self.config.dataset.path = str(dataset_path)
+        intake_result = run_intake(self.config)
+
+        self.artifacts["dataset_manifest"] = intake_result.manifest
+        self.artifacts["intake_data"] = intake_result.data
+        self.artifacts["split_result"] = intake_result.split_result
+        self.artifacts["modality"] = intake_result.manifest.modality
+        self.artifacts["task_type"] = intake_result.manifest.task_type
+
+        # Extract numpy arrays from intake data for downstream stages
+        data = intake_result.data
+        split = intake_result.split_result
+        if isinstance(data, dict) and "df" in data:
+            df = data["df"]
+            features = data["features"]
+            target = data["target"]
+            X = df[features].values
+            y = df[target].values
+            self.artifacts["X_train"] = X[split.train_indices]
+            self.artifacts["y_train"] = y[split.train_indices]
+            self.artifacts["X_val"] = X[split.val_indices]
+            self.artifacts["y_val"] = y[split.val_indices]
+            self.artifacts["X_test"] = X[split.test_indices]
+            self.artifacts["y_test"] = y[split.test_indices]
+            self.artifacts["dataframe"] = df
+        elif isinstance(data, dict) and "embeddings" in data:
+            emb = data["embeddings"]
+            y = data["labels"]
+            self.artifacts["X_train"] = emb[split.train_indices]
+            self.artifacts["y_train"] = y[split.train_indices]
+            self.artifacts["X_val"] = emb[split.val_indices]
+            self.artifacts["y_val"] = y[split.val_indices]
+            self.artifacts["X_test"] = emb[split.test_indices]
+            self.artifacts["y_test"] = y[split.test_indices]
+
+        self.state.transition(PipelineStage.DATA_VALIDATED)
+        self.audit.log("DATA_VALIDATED", "intake_complete", {
+            "modality": intake_result.manifest.modality.value,
+            "task_type": intake_result.manifest.task_type.value,
+            "n_train": intake_result.manifest.train_size,
+        })
+
+        # Run split audit
+        from aml_toolkit.audit.split_auditor import run_split_audit
+
+        audit_report = run_split_audit(
+            data=intake_result.data,
+            manifest=intake_result.manifest,
+            split=intake_result.split_result,
+            config=self.config,
+        )
+        self.artifacts["split_audit_report"] = audit_report
+
+        if not audit_report.passed:
+            self.audit.log("DATA_VALIDATED", "audit_failed", {"issues": audit_report.blocking_issues})
+            self.state.abstain(AbstentionReason.LEAKAGE_BLOCKED)
+            self.artifacts["final_status"] = PipelineStage.ABSTAINED
+            self.artifacts["abstention_reason"] = AbstentionReason.LEAKAGE_BLOCKED
+            raise SplitIntegrityError("Split audit failed: " + str(audit_report.blocking_issues))
+
+        self.audit.log("DATA_VALIDATED", "audit_passed")
+
+    def _stage_profiling(self) -> None:
+        from aml_toolkit.profiling.profiler_engine import run_profiling
+
+        self.audit.log("DATA_VALIDATED", "profiling_start")
+        profile = run_profiling(
+            data=self.artifacts["intake_data"],
+            manifest=self.artifacts["dataset_manifest"],
+            split=self.artifacts["split_result"],
+            config=self.config,
+        )
+        self.artifacts["data_profile"] = profile
+        self.state.transition(PipelineStage.PROFILED)
+        self.audit.log("PROFILED", "profiling_complete")
+
+    def _stage_probes(self) -> None:
+        from aml_toolkit.probes.probe_engine import run_probes
+
+        self.audit.log("PROFILED", "probes_start")
+        probe_results = run_probes(
+            data=self.artifacts["intake_data"],
+            manifest=self.artifacts["dataset_manifest"],
+            split=self.artifacts["split_result"],
+            config=self.config,
+        )
+        self.artifacts["probe_results"] = probe_results
+        self.state.transition(PipelineStage.PROBED)
+        self.audit.log("PROBED", "probes_complete")
+
+    def _stage_interventions(self) -> None:
+        from aml_toolkit.interventions.intervention_planner import plan_interventions
+
+        self.audit.log("PROBED", "interventions_start")
+        plan = plan_interventions(
+            profile=self.artifacts["data_profile"],
+            audit_report=self.artifacts["split_audit_report"],
+            probe_results=self.artifacts.get("probe_results"),
+            config=self.config,
+        )
+        self.artifacts["intervention_plan"] = plan
+        self.state.transition(PipelineStage.INTERVENTION_SELECTED)
+        self.audit.log("INTERVENTION_SELECTED", "interventions_complete")
+
+    def _stage_training(self) -> None:
+        from aml_toolkit.models.registry import build_candidate_portfolio
+        from aml_toolkit.runtime.training_executor import run_training
+
+        self.audit.log("INTERVENTION_SELECTED", "training_start")
+
+        portfolio = build_candidate_portfolio(
+            modality=self.artifacts["modality"],
+            config=self.config,
+            intervention_plan=self.artifacts.get("intervention_plan"),
+        )
+        self.artifacts["candidate_portfolio"] = portfolio
+
+        exec_result = run_training(
+            self.artifacts["X_train"],
+            self.artifacts["y_train"],
+            self.artifacts["X_val"],
+            self.artifacts["y_val"],
+            portfolio=portfolio,
+            audit_report=self.artifacts["split_audit_report"],
+            config=self.config,
+            intervention_plan=self.artifacts.get("intervention_plan"),
+        )
+        self.artifacts["execution_result"] = exec_result
+        self.artifacts["trained_models"] = exec_result.trained_models
+
+        self.state.transition(PipelineStage.TRAINING_ACTIVE)
+
+        # Runtime decisions
+        from aml_toolkit.runtime.decision_engine import RuntimeDecisionEngine
+
+        engine = RuntimeDecisionEngine(self.config, portfolio.warmup_rules)
+        from aml_toolkit.models.registry import create_default_registry
+        registry = create_default_registry()
+
+        for trace in exec_result.traces:
+            if trace.status == "completed":
+                meta = registry.get_metadata(trace.model_family)
+                engine.evaluate_from_trace(
+                    trace.candidate_id, trace.model_family, meta.is_neural,
+                    trace.training_trace, trace.metrics,
+                )
+
+        self.artifacts["runtime_decision_log"] = engine.decision_log
+
+        # Select best candidate
+        if exec_result.trained_models:
+            best_id = max(
+                exec_result.trained_models.keys(),
+                key=lambda cid: next(
+                    (t.metrics.get("macro_f1", 0) for t in exec_result.traces if t.candidate_id == cid), 0
+                ),
+            )
+            self.artifacts["best_candidate_id"] = best_id
+            self.state.transition(PipelineStage.MODEL_SELECTED)
+            self.audit.log("MODEL_SELECTED", "training_complete", {"best": best_id})
+        else:
+            self.audit.log("TRAINING_ACTIVE", "no_models_trained")
+            self.state.abstain(AbstentionReason.NO_ROBUST_MODEL)
+            self.artifacts["final_status"] = PipelineStage.ABSTAINED
+            self.artifacts["abstention_reason"] = AbstentionReason.NO_ROBUST_MODEL
+            raise RuntimeError("No models completed training.")
+
+    def _stage_calibration(self) -> None:
+        from aml_toolkit.calibration.calibration_manager import run_calibration
+
+        self.audit.log("MODEL_SELECTED", "calibration_start")
+        cal_report = run_calibration(
+            self.artifacts["trained_models"],
+            self.artifacts["X_val"],
+            self.artifacts["y_val"],
+            self.config,
+        )
+        self.artifacts["calibration_report"] = cal_report
+        self.state.transition(PipelineStage.CALIBRATED)
+        self.audit.log("CALIBRATED", "calibration_complete")
+
+    def _stage_ensemble(self) -> None:
+        from aml_toolkit.ensemble.ensemble_manager import run_ensemble
+
+        self.audit.log("CALIBRATED", "ensemble_start")
+        ens_report = run_ensemble(
+            self.artifacts["trained_models"],
+            self.artifacts["X_val"],
+            self.artifacts["y_val"],
+            self.config,
+        )
+        self.artifacts["ensemble_report"] = ens_report
+        self.state.transition(PipelineStage.ENSEMBLED)
+        self.audit.log("ENSEMBLED", "ensemble_complete", {"selected": ens_report.ensemble_selected})
+
+    def _stage_explainability(self) -> None:
+        from aml_toolkit.explainability.explainability_manager import run_explainability
+
+        self.audit.log("ENSEMBLED", "explainability_start")
+        exp_report = run_explainability(
+            self.artifacts["trained_models"],
+            self.artifacts["X_val"],
+            self.artifacts["y_val"],
+            self.config,
+            self._run_dir / "explainability",
+            modality=self.artifacts.get("modality", ModalityType.TABULAR),
+        )
+        self.artifacts["explainability_report"] = exp_report
+        self.state.transition(PipelineStage.EXPLAINED)
+        self.audit.log("EXPLAINED", "explainability_complete")
+
+    def _finalize(self) -> None:
+        self.artifacts["final_status"] = PipelineStage.COMPLETED
+        self.state.transition(PipelineStage.COMPLETED)
+        self.audit.log("COMPLETED", "pipeline_complete")

@@ -1,0 +1,29 @@
+# Conservative mode: strict safety, lower budgets, interpretable preference.
+
+profiling:
+  imbalance_ratio_warning: 3.0
+  imbalance_ratio_severe: 10.0
+
+interventions:
+  oversampling_noise_risk_threshold: 0.10
+  require_calibration_when_imbalanced: true
+
+candidates:
+  allowed_families:
+    - logistic
+    - rf
+    - xgb
+  max_candidates: 3
+
+runtime_decision:
+  min_warmup_epochs_default: 7
+  min_warmup_epochs_neural: 15
+  improvement_slope_threshold: 0.002
+  overfit_gap_limit: 0.10
+  patience: 5
+
+ensemble:
+  marginal_gain_threshold: 0.02
+
+compute:
+  max_training_time_seconds: 1800

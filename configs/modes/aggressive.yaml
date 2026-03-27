@@ -1,0 +1,33 @@
+# Aggressive mode: wider candidate pools, longer budgets, higher tolerance.
+
+profiling:
+  imbalance_ratio_warning: 10.0
+  imbalance_ratio_severe: 50.0
+
+interventions:
+  oversampling_noise_risk_threshold: 0.25
+
+candidates:
+  allowed_families:
+    - logistic
+    - rf
+    - xgb
+    - mlp
+    - cnn
+    - vit
+  max_candidates: 8
+  budget_strategy: proportional
+
+runtime_decision:
+  min_warmup_epochs_default: 3
+  min_warmup_epochs_neural: 8
+  improvement_slope_threshold: 0.0005
+  overfit_gap_limit: 0.20
+  patience: 2
+
+ensemble:
+  marginal_gain_threshold: 0.005
+  max_ensemble_size: 5
+
+compute:
+  max_training_time_seconds: 7200

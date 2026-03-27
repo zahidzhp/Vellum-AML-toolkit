@@ -1,0 +1,98 @@
+mode: BALANCED
+seed: 42
+
+dataset:
+  path: ""
+  modality_override: null
+  target_column: label
+  group_column: null
+  time_column: null
+  metadata_columns: []
+
+splitting:
+  strategy: STRATIFIED
+  test_ratio: 0.2
+  val_ratio: 0.1
+  random_seed: 42
+
+profiling:
+  imbalance_ratio_warning: 5.0
+  imbalance_ratio_severe: 20.0
+  duplicate_check_enabled: true
+  ood_shift_enabled: true
+
+probes:
+  enabled_probes:
+    - majority
+    - stratified
+    - logistic
+    - rf
+    - xgb
+  intervention_branches:
+    - none
+    - class_weighting
+    - oversampling
+    - undersampling
+  metric: macro_f1
+
+interventions:
+  allowed_types:
+    - CLASS_WEIGHTING
+    - OVERSAMPLING
+    - UNDERSAMPLING
+    - AUGMENTATION
+    - FOCAL_LOSS
+    - THRESHOLDING
+    - CALIBRATION
+  oversampling_noise_risk_threshold: 0.15
+  require_calibration_when_imbalanced: true
+
+candidates:
+  allowed_families:
+    - logistic
+    - rf
+    - xgb
+    - mlp
+  max_candidates: 5
+  budget_strategy: equal
+
+runtime_decision:
+  min_warmup_epochs_default: 5
+  min_warmup_epochs_neural: 10
+  improvement_slope_threshold: 0.001
+  overfit_gap_limit: 0.15
+  patience: 3
+
+calibration:
+  enabled_methods:
+    - temperature_scaling
+    - isotonic
+  primary_objective: ece
+
+ensemble:
+  enabled_strategies:
+    - soft_voting
+    - weighted_averaging
+  marginal_gain_threshold: 0.01
+  max_ensemble_size: 3
+
+explainability:
+  tabular_methods:
+    - feature_importance
+    - shap
+  image_methods:
+    - gradcam
+  faithfulness_enabled: true
+
+reporting:
+  output_dir: outputs
+  formats:
+    - json
+    - markdown
+  verbosity: normal
+
+compute:
+  max_training_time_seconds: 3600
+  memory_limit_gb: null
+  gpu_enabled: true
+  resource_abstention_on_oom: true

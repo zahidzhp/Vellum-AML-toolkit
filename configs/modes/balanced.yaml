@@ -1,0 +1,3 @@
+# Balanced mode: default trade-off between thoroughness and speed.
+# All values match configs/default.yaml — this file exists as a template
+# for users who want to customize the balanced mode specifically.

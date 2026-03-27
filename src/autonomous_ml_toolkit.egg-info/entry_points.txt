@@ -1,0 +1,2 @@
+[console_scripts]
+aml-toolkit = aml_toolkit.api.cli:app

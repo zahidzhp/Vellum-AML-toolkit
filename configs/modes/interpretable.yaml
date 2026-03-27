@@ -1,0 +1,23 @@
+# Interpretable mode: restricts to inherently interpretable models.
+
+candidates:
+  allowed_families:
+    - logistic
+    - rf
+  max_candidates: 3
+
+explainability:
+  tabular_methods:
+    - feature_importance
+  image_methods: []
+  faithfulness_enabled: false
+
+ensemble:
+  enabled_strategies:
+    - soft_voting
+  max_ensemble_size: 2
+  marginal_gain_threshold: 0.02
+
+compute:
+  gpu_enabled: false
+  max_training_time_seconds: 1200
