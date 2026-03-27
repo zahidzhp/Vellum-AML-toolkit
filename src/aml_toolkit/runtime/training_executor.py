@@ -71,6 +71,7 @@ def run_training(
     registry: ModelRegistry | None = None,
     intervention_plan: InterventionPlan | None = None,
     hooks: list[TrainingLifecycleHook] | None = None,
+    raw_data: dict[str, Any] | None = None,
 ) -> ExecutionResult:
     """Execute training for all candidates in the portfolio serially.
 
@@ -154,13 +155,26 @@ def run_training(
                 # Adapter may not accept class_weight
                 adapter = adapter_class(seed=config.seed)
 
+            # Determine X/y for this candidate — image-native models use raw paths
+            from aml_toolkit.core.enums import ModalityType
+
+            fit_X_train, fit_y_train = X_train, y_train
+            fit_X_val, fit_y_val = X_val, y_val
+            if (
+                raw_data
+                and "image_paths_train" in raw_data
+                and ModalityType.IMAGE in metadata.supported_modalities
+            ):
+                fit_X_train = raw_data["image_paths_train"]
+                fit_X_val = raw_data["image_paths_val"]
+
             # Train within resource guard
             with resource_guard.guarded_execution(candidate.candidate_id):
-                adapter.fit(X_train, y_train, X_val, y_val, config)
+                adapter.fit(fit_X_train, fit_y_train, fit_X_val, fit_y_val, config)
 
             # Evaluate
             eval_metrics = adapter.evaluate(
-                X_val, y_val, ["macro_f1", "accuracy"]
+                fit_X_val, fit_y_val, ["macro_f1", "accuracy"]
             )
 
             trace.status = "completed"

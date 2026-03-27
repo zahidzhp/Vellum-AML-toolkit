@@ -269,7 +269,88 @@ class TestArtifactPersistence:
 
 
 # ---------------------------------------------------------------------------
-# I5: State machine enforced by orchestrator
+# I5: Full image pipeline via orchestrator
+# ---------------------------------------------------------------------------
+
+class TestImagePipelineIntegration:
+
+    @staticmethod
+    def _make_image_folder(tmp_path, n_per_class: int = 10):
+        from PIL import Image
+
+        img_dir = tmp_path / "images"
+        for class_name in ["cat", "dog", "bird"]:
+            class_dir = img_dir / class_name
+            class_dir.mkdir(parents=True, exist_ok=True)
+            for i in range(n_per_class):
+                img = Image.fromarray(
+                    np.random.RandomState(42 + i).randint(0, 255, (32, 32, 3), dtype=np.uint8)
+                )
+                img.save(class_dir / f"{class_name}_{i}.jpg")
+        return img_dir
+
+    def test_full_image_pipeline_embedding_head(self, tmp_path):
+        """End-to-end: image folder -> embedding_head pipeline -> report."""
+        from aml_toolkit.artifacts import FinalReport
+        from aml_toolkit.orchestration.orchestrator import PipelineOrchestrator
+
+        img_dir = self._make_image_folder(tmp_path, n_per_class=15)
+        config = ToolkitConfig(
+            dataset={"path": str(img_dir)},
+            reporting={"output_dir": str(tmp_path / "outputs")},
+            candidates={"allowed_families": ["embedding_head"], "max_candidates": 1},
+            compute={"gpu_enabled": False, "max_training_time_seconds": 120},
+        )
+
+        orchestrator = PipelineOrchestrator(config)
+        report = orchestrator.run(img_dir)
+
+        assert isinstance(report, FinalReport)
+        assert report.final_status in (PipelineStage.COMPLETED, PipelineStage.ABSTAINED)
+        assert orchestrator.run_dir is not None
+        assert orchestrator.run_dir.exists()
+
+        # Verify artifacts were populated
+        assert "image_paths" in orchestrator.artifacts
+        assert "X_train" in orchestrator.artifacts  # embeddings extracted
+        assert orchestrator.artifacts["modality"] == ModalityType.IMAGE
+
+        # Audit log must exist
+        audit_path = orchestrator.run_dir / "logs" / "audit_log.json"
+        assert audit_path.exists()
+
+    def test_image_pipeline_with_cnn(self, tmp_path):
+        """End-to-end: image folder -> CNN training (aggressive mode) -> report."""
+        from aml_toolkit.artifacts import FinalReport
+        from aml_toolkit.orchestration.orchestrator import PipelineOrchestrator
+
+        img_dir = self._make_image_folder(tmp_path, n_per_class=15)
+        config = ToolkitConfig(
+            dataset={"path": str(img_dir)},
+            reporting={"output_dir": str(tmp_path / "outputs")},
+            candidates={
+                "allowed_families": ["cnn"],
+                "max_candidates": 1,
+                "cnn_backbone": "resnet18",
+            },
+            runtime_decision={"min_warmup_epochs_neural": 1},
+            compute={"gpu_enabled": False, "max_training_time_seconds": 300},
+        )
+
+        orchestrator = PipelineOrchestrator(config)
+        report = orchestrator.run(img_dir)
+
+        assert isinstance(report, FinalReport)
+        assert report.final_status in (PipelineStage.COMPLETED, PipelineStage.ABSTAINED)
+
+        # If completed, CNN model should have been trained
+        if report.final_status == PipelineStage.COMPLETED:
+            assert "trained_models" in orchestrator.artifacts
+            assert "image_paths_val" in orchestrator.artifacts
+
+
+# ---------------------------------------------------------------------------
+# I6: State machine enforced by orchestrator
 # ---------------------------------------------------------------------------
 
 class TestStateMachineEnforcement:

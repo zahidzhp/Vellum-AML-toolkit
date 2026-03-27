@@ -29,6 +29,57 @@ If the toolkit determines it cannot produce a trustworthy result (leakage detect
 
 Task types: binary classification, multiclass classification, multilabel classification.
 
+### Image Classification Details
+
+The toolkit supports image classification via folder-per-class directory structure:
+
+```
+images/
+  cat/
+    img_001.jpg
+    img_002.jpg
+  dog/
+    img_003.jpg
+    img_004.jpg
+  bird/
+    img_005.jpg
+```
+
+Supported image formats: `.jpg`, `.jpeg`, `.png`, `.bmp`, `.tiff`, `.webp`.
+
+**How it works:**
+
+1. **Auto-detection**: The toolkit detects image modality when the dataset path is a directory
+2. **Feature extraction**: Images are converted to embeddings using a configurable pretrained backbone (default: ResNet18). This enables probing and the embedding-based pipeline
+3. **CNN training** (aggressive mode): Transfer learning with any torchvision ResNet variant — freezes backbone, trains classification head, then fine-tunes the last residual block
+4. **ViT training** (aggressive mode): Transfer learning with any timm ViT variant — freezes backbone, trains classification head
+5. **GradCAM heatmaps**: Real hook-based Grad-CAM for CNN models, producing spatial heatmaps highlighting discriminative regions
+
+**Configurable backbones:**
+
+```yaml
+candidates:
+  # Any torchvision ResNet: resnet18, resnet34, resnet50, resnet101, resnet152,
+  # wide_resnet50_2, resnext50_32x4d, resnext101_32x8d, etc.
+  cnn_backbone: resnet50
+
+  # Any timm ViT: vit_small_patch16_224, vit_base_patch16_224, vit_large_patch16_224, etc.
+  vit_backbone: vit_base_patch16_224
+
+  # Backbone used for the shared feature extractor (probes + embedding pipeline)
+  feature_extractor_backbone: resnet18
+```
+
+**Mode availability:**
+
+| Model Family | balanced | conservative | aggressive | interpretable |
+|-------------|----------|-------------|------------|---------------|
+| embedding_head | Yes | Yes | Yes | Yes |
+| cnn | No | No | Yes | No |
+| vit | No | No | Yes | No |
+
+In **balanced** mode, image datasets are classified using the `embedding_head` adapter (logistic regression on extracted features). For CNN/ViT training, use `--mode aggressive`.
+
 ## Installation
 
 Requires Python 3.11 or later.
@@ -75,6 +126,16 @@ Runs intake and validation only — useful for checking your data before a full 
 
 ```bash
 aml-toolkit run data.csv --config my_config.yaml
+```
+
+### Run on an image folder
+
+```bash
+# Balanced mode: uses embedding_head (logistic regression on extracted features)
+aml-toolkit run images/
+
+# Aggressive mode: trains CNN/ViT via transfer learning
+aml-toolkit run images/ --mode aggressive
 ```
 
 ### Override options from the command line
@@ -188,8 +249,12 @@ candidates:
     - rf
     - xgb
     - mlp
+    - embedding_head             # Logistic regression on embeddings (image/embedding modality)
   max_candidates: 5
   budget_strategy: equal         # How to allocate compute across candidates
+  cnn_backbone: resnet18         # Any torchvision ResNet variant
+  vit_backbone: vit_small_patch16_224  # Any timm ViT variant
+  feature_extractor_backbone: resnet18  # Backbone for shared feature extraction
 
 # Runtime decision engine
 runtime_decision:
@@ -242,7 +307,30 @@ compute:
 ### Example: Custom Config for Medical Imaging
 
 ```yaml
-# medical_config.yaml
+# medical_imaging_config.yaml
+mode: AGGRESSIVE
+
+candidates:
+  allowed_families:
+    - embedding_head
+    - cnn
+  max_candidates: 2
+  cnn_backbone: resnet50         # Larger backbone for medical images
+  feature_extractor_backbone: resnet50
+
+compute:
+  max_training_time_seconds: 1200
+  gpu_enabled: true
+```
+
+```bash
+aml-toolkit run xray_images/ --config medical_imaging_config.yaml
+```
+
+### Example: Tabular Data with Grouped Splitting
+
+```yaml
+# grouped_config.yaml
 mode: CONSERVATIVE
 
 dataset:
@@ -264,7 +352,7 @@ compute:
 ```
 
 ```bash
-aml-toolkit run patient_data.csv --config medical_config.yaml
+aml-toolkit run patient_data.csv --config grouped_config.yaml
 ```
 
 ## Output Structure
@@ -367,6 +455,33 @@ print(report.final_recommendation)  # "Recommended model: logistic_001"
 print(report.warnings)              # Any issues encountered
 ```
 
+### Image Classification
+
+```python
+from aml_toolkit.core.config import ToolkitConfig
+from aml_toolkit.orchestration.orchestrator import PipelineOrchestrator
+
+# Balanced mode: embedding_head (logistic regression on extracted ResNet features)
+config = ToolkitConfig(
+    dataset={"path": "images/"},
+    candidates={"allowed_families": ["embedding_head"], "max_candidates": 1},
+    compute={"gpu_enabled": False},
+)
+report = PipelineOrchestrator(config).run("images/")
+
+# Aggressive mode: CNN transfer learning with a specific ResNet backbone
+config = ToolkitConfig(
+    dataset={"path": "images/"},
+    candidates={
+        "allowed_families": ["cnn", "embedding_head"],
+        "max_candidates": 2,
+        "cnn_backbone": "resnet50",
+    },
+    compute={"gpu_enabled": True},
+)
+report = PipelineOrchestrator(config).run("images/")
+```
+
 ### Using Individual Stages
 
 Each pipeline stage can be used independently:
@@ -419,10 +534,10 @@ python -m pytest tests/integration/ -v
 python -m pytest tests/ --cov=aml_toolkit --cov-report=term-missing
 ```
 
-The test suite includes:
-- **Unit tests** (20 files, 350+ tests) — per-module contract verification
+The test suite includes 427 tests across 26 files:
+- **Unit tests** (22 files) — per-module contract verification including image adapters, GradCAM, and feature extraction
 - **Regression tests** — guard against integration regressions across all phases
-- **Integration tests** — multi-stage data flow on real synthetic datasets
+- **Integration tests** — multi-stage data flow on real synthetic datasets, including full image pipeline (embedding_head and CNN paths)
 - **End-to-end sanity suite** — 15 mandatory edge cases including leakage detection, resource abstention, noise-blocked oversampling, and augmentation guard
 
 ## Project Structure
@@ -445,7 +560,7 @@ src/aml_toolkit/
   reporting/        JSON and Markdown report builders
   orchestration/    Pipeline orchestrator, state machine, audit logger
   api/              CLI entrypoint
-  utils/            Serialization, resource guard
+  utils/            Serialization, resource guard, image feature extraction
 ```
 
 ## Design Documents

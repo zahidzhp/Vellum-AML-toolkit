@@ -78,21 +78,21 @@ class TestAdapterInstantiation:
         adapter = MLPAdapter()
         assert adapter.get_model_family() == "mlp"
 
-    def test_cnn_adapter_deferred(self):
+    def test_cnn_adapter_properties(self):
         from aml_toolkit.models.image.cnn_adapter import CNNAdapter
 
         adapter = CNNAdapter()
         assert adapter.get_model_family() == "cnn"
-        with pytest.raises(NotImplementedError, match="deferred"):
-            adapter.fit(None, None, None, None, ToolkitConfig())
+        assert adapter.is_probabilistic() is True
+        assert adapter._supports_gradcam is True
 
-    def test_vit_adapter_deferred(self):
+    def test_vit_adapter_properties(self):
         from aml_toolkit.models.image.vit_adapter import ViTAdapter
 
         adapter = ViTAdapter()
         assert adapter.get_model_family() == "vit"
-        with pytest.raises(NotImplementedError, match="deferred"):
-            adapter.predict(None)
+        assert adapter.is_probabilistic() is True
+        assert adapter._supports_gradcam is False
 
     def test_logistic_adapter_fit_predict(self):
         from aml_toolkit.models.tabular.logistic_adapter import LogisticAdapter

@@ -76,10 +76,13 @@ class CandidatesConfig(BaseModel):
     """Candidate model selection settings."""
 
     allowed_families: list[str] = Field(
-        default_factory=lambda: ["logistic", "rf", "xgb", "mlp"]
+        default_factory=lambda: ["logistic", "rf", "xgb", "mlp", "embedding_head"]
     )
     max_candidates: int = 5
     budget_strategy: str = "equal"
+    cnn_backbone: str = "resnet18"
+    vit_backbone: str = "vit_small_patch16_224"
+    feature_extractor_backbone: str = "resnet18"
 
 
 class RuntimeDecisionConfig(BaseModel):

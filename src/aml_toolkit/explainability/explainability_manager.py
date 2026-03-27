@@ -43,6 +43,7 @@ def run_explainability(
     config: ToolkitConfig,
     output_dir: Path,
     modality: ModalityType = ModalityType.TABULAR,
+    image_paths_val: list[Any] | None = None,
 ) -> ExplainabilityReport:
     """Run all configured explainability methods on trained candidates.
 
@@ -109,7 +110,17 @@ def run_explainability(
                 continue
 
             try:
-                output = strategy.explain(model, X_val, y_val, candidate_dir / method_name, config)
+                # For image strategies (GradCAM), use image paths if available
+                x_for_strategy = X_val
+                if (
+                    method_name in _IMAGE_STRATEGIES
+                    and image_paths_val is not None
+                    and hasattr(model, "get_model_family")
+                    and model.get_model_family() in ("cnn", "vit")
+                ):
+                    x_for_strategy = image_paths_val
+
+                output = strategy.explain(model, x_for_strategy, y_val, candidate_dir / method_name, config)
                 output.candidate_id = candidate_id
 
                 if not output.supported:

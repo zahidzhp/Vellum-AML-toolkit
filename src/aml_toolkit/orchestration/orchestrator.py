@@ -134,6 +134,32 @@ class PipelineOrchestrator:
             self.artifacts["y_val"] = y[split.val_indices]
             self.artifacts["X_test"] = emb[split.test_indices]
             self.artifacts["y_test"] = y[split.test_indices]
+        elif isinstance(data, dict) and "image_paths" in data:
+            from aml_toolkit.utils.image_feature_extractor import ImageFeatureExtractor
+
+            image_paths = data["image_paths"]
+            y = data["labels"]
+
+            # Store raw image paths for CNN/ViT adapters
+            self.artifacts["image_paths"] = image_paths
+            self.artifacts["image_paths_train"] = [image_paths[i] for i in split.train_indices]
+            self.artifacts["image_paths_val"] = [image_paths[i] for i in split.val_indices]
+            self.artifacts["image_paths_test"] = [image_paths[i] for i in split.test_indices]
+
+            # Extract embeddings for embedding-based stages (probes, calibration, etc.)
+            backbone = self.config.candidates.feature_extractor_backbone
+            extractor = ImageFeatureExtractor(
+                backbone=backbone,
+                gpu_enabled=self.config.compute.gpu_enabled,
+            )
+            embeddings = extractor.extract(image_paths)
+
+            self.artifacts["X_train"] = embeddings[split.train_indices]
+            self.artifacts["y_train"] = y[split.train_indices]
+            self.artifacts["X_val"] = embeddings[split.val_indices]
+            self.artifacts["y_val"] = y[split.val_indices]
+            self.artifacts["X_test"] = embeddings[split.test_indices]
+            self.artifacts["y_test"] = y[split.test_indices]
 
         self.state.transition(PipelineStage.DATA_VALIDATED)
         self.audit.log("DATA_VALIDATED", "intake_complete", {
@@ -217,6 +243,16 @@ class PipelineOrchestrator:
         )
         self.artifacts["candidate_portfolio"] = portfolio
 
+        # Pass raw image paths for CNN/ViT adapters if modality is IMAGE
+        raw_data = None
+        if self.artifacts.get("modality") == ModalityType.IMAGE and "image_paths_train" in self.artifacts:
+            raw_data = {
+                "image_paths_train": self.artifacts["image_paths_train"],
+                "image_paths_val": self.artifacts["image_paths_val"],
+                "y_train": self.artifacts["y_train"],
+                "y_val": self.artifacts["y_val"],
+            }
+
         exec_result = run_training(
             self.artifacts["X_train"],
             self.artifacts["y_train"],
@@ -226,6 +262,7 @@ class PipelineOrchestrator:
             audit_report=self.artifacts["split_audit_report"],
             config=self.config,
             intervention_plan=self.artifacts.get("intervention_plan"),
+            raw_data=raw_data,
         )
         self.artifacts["execution_result"] = exec_result
         self.artifacts["trained_models"] = exec_result.trained_models
@@ -267,16 +304,50 @@ class PipelineOrchestrator:
             self.artifacts["abstention_reason"] = AbstentionReason.NO_ROBUST_MODEL
             raise RuntimeError("No models completed training.")
 
+    def _get_model_x_val(self, model: Any) -> Any:
+        """Return the appropriate X_val for a model — image paths for CNN/ViT, embeddings otherwise."""
+        if (
+            hasattr(model, "get_model_family")
+            and model.get_model_family() in ("cnn", "vit")
+            and "image_paths_val" in self.artifacts
+        ):
+            return self.artifacts["image_paths_val"]
+        return self.artifacts["X_val"]
+
     def _stage_calibration(self) -> None:
         from aml_toolkit.calibration.calibration_manager import run_calibration
 
         self.audit.log("MODEL_SELECTED", "calibration_start")
+
+        # Split models by X_val type to avoid passing wrong data
+        embedding_models = {}
+        image_models = {}
+        for cid, model in self.artifacts["trained_models"].items():
+            if hasattr(model, "get_model_family") and model.get_model_family() in ("cnn", "vit") and "image_paths_val" in self.artifacts:
+                image_models[cid] = model
+            else:
+                embedding_models[cid] = model
+
+        # Calibrate embedding-based models
         cal_report = run_calibration(
-            self.artifacts["trained_models"],
-            self.artifacts["X_val"],
-            self.artifacts["y_val"],
-            self.config,
-        )
+            embedding_models, self.artifacts["X_val"], self.artifacts["y_val"], self.config,
+        ) if embedding_models else None
+
+        # Calibrate image-native models
+        if image_models and "image_paths_val" in self.artifacts:
+            img_cal = run_calibration(
+                image_models, self.artifacts["image_paths_val"], self.artifacts["y_val"], self.config,
+            )
+            if cal_report is not None:
+                cal_report.results.extend(img_cal.results)
+                cal_report.warnings.extend(img_cal.warnings)
+            else:
+                cal_report = img_cal
+
+        if cal_report is None:
+            from aml_toolkit.artifacts import CalibrationReport
+            cal_report = CalibrationReport()
+
         self.artifacts["calibration_report"] = cal_report
         self.state.transition(PipelineStage.CALIBRATED)
         self.audit.log("CALIBRATED", "calibration_complete")
@@ -285,12 +356,40 @@ class PipelineOrchestrator:
         from aml_toolkit.ensemble.ensemble_manager import run_ensemble
 
         self.audit.log("CALIBRATED", "ensemble_start")
-        ens_report = run_ensemble(
-            self.artifacts["trained_models"],
-            self.artifacts["X_val"],
-            self.artifacts["y_val"],
-            self.config,
-        )
+
+        # Separate embedding-compatible models from image-native models
+        embedding_models = {}
+        image_native_models = {}
+        for cid, m in self.artifacts["trained_models"].items():
+            if hasattr(m, "get_model_family") and m.get_model_family() in ("cnn", "vit"):
+                image_native_models[cid] = m
+            else:
+                embedding_models[cid] = m
+
+        if embedding_models:
+            # Ensemble embedding-compatible models using embedding X_val
+            ens_report = run_ensemble(
+                embedding_models,
+                self.artifacts["X_val"],
+                self.artifacts["y_val"],
+                self.config,
+            )
+        elif image_native_models and "image_paths_val" in self.artifacts:
+            # Only image-native models — ensemble using image paths
+            ens_report = run_ensemble(
+                image_native_models,
+                self.artifacts["image_paths_val"],
+                self.artifacts["y_val"],
+                self.config,
+            )
+        else:
+            # Fallback: run on all models with embedding X_val
+            ens_report = run_ensemble(
+                self.artifacts["trained_models"],
+                self.artifacts["X_val"],
+                self.artifacts["y_val"],
+                self.config,
+            )
         self.artifacts["ensemble_report"] = ens_report
         self.state.transition(PipelineStage.ENSEMBLED)
         self.audit.log("ENSEMBLED", "ensemble_complete", {"selected": ens_report.ensemble_selected})
@@ -306,6 +405,7 @@ class PipelineOrchestrator:
             self.config,
             self._run_dir / "explainability",
             modality=self.artifacts.get("modality", ModalityType.TABULAR),
+            image_paths_val=self.artifacts.get("image_paths_val"),
         )
         self.artifacts["explainability_report"] = exp_report
         self.state.transition(PipelineStage.EXPLAINED)

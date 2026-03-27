@@ -101,11 +101,18 @@ def run_probes(
                     intervention_branch_results.append(result)
 
     elif manifest.modality == ModalityType.IMAGE:
-        # For image modality without pre-extracted embeddings, log a note
-        logger.info(
-            "Image modality without pre-extracted embeddings. "
-            "Embedding probe requires pre-computed features."
-        )
+        # Image features were extracted to embeddings in _extract_train_val
+        probe_names = [p for p in enabled_probes if p in _EMBEDDING_PROBES]
+        if not probe_names:
+            probe_names = ["embedding_logistic"]
+
+        for probe_name in probe_names:
+            logger.info(f"Running probe: {probe_name} (image embeddings, no intervention)")
+            result = _run_single_probe(
+                probe_name, X_train, y_train, X_val, y_val,
+                metrics, "none", seed, manifest.modality,
+            )
+            shallow_results.append(result)
 
     # Build intervention sensitivity summary
     sensitivity = _build_intervention_sensitivity(
@@ -139,6 +146,13 @@ def _extract_train_val(
         X = np.nan_to_num(X, nan=0.0)
     elif "embeddings" in data:
         X = data["embeddings"]
+        y = data["labels"]
+    elif "image_paths" in data:
+        from aml_toolkit.utils.image_feature_extractor import ImageFeatureExtractor
+
+        logger.info("Extracting image embeddings for probes...")
+        extractor = ImageFeatureExtractor(gpu_enabled=False)  # Probes are lightweight; CPU is fine
+        X = extractor.extract(data["image_paths"])
         y = data["labels"]
     else:
         # Fallback: empty arrays
