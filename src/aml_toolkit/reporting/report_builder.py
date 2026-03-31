@@ -95,6 +95,14 @@ class MarkdownReporter(Reporter):
                 lines.append(f"- {w}")
             lines.append("")
 
+        if report.plot_paths:
+            lines.append("## Visualizations")
+            for name, plot_path in sorted(report.plot_paths.items()):
+                label = name.replace("_", " ").title()
+                lines.append(f"### {label}")
+                lines.append(f"![{label}]({plot_path})")
+                lines.append("")
+
         with open(path, "w") as f:
             f.write("\n".join(lines))
 
@@ -180,6 +188,9 @@ def _build_final_report(artifacts: dict[str, Any], config: ToolkitConfig) -> Fin
 
     if "explainability_report" in artifacts:
         report.explainability_summary = _safe_dump(artifacts["explainability_report"])
+
+    if "plot_paths" in artifacts:
+        report.plot_paths = artifacts["plot_paths"]
 
     # Final recommendation
     if report.final_status == PipelineStage.COMPLETED:

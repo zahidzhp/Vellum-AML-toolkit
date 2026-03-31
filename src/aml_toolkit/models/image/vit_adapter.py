@@ -193,6 +193,9 @@ class ViTAdapter(CandidateModel):
     def is_probabilistic(self) -> bool:
         return True
 
+    def get_backbone(self) -> str | None:
+        return self._backbone
+
     def serialize(self, path: Any) -> None:
         assert self._model is not None
         torch.save(self._model.state_dict(), Path(path))

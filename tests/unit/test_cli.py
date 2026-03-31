@@ -38,9 +38,8 @@ class TestCLIRun:
         assert result.exit_code == 0
         assert "--config" in result.output
 
-    @patch("aml_toolkit.api.cli.setup_logging")
     @patch("aml_toolkit.api.cli.PipelineOrchestrator")
-    def test_run_invokes_orchestrator(self, mock_orch_cls, mock_setup_log, tmp_path):
+    def test_run_invokes_orchestrator(self, mock_orch_cls, tmp_path):
         csv_path = tmp_path / "data.csv"
         df = pd.DataFrame({"f1": [1, 2, 3], "label": [0, 1, 0]})
         df.to_csv(csv_path, index=False)
@@ -59,9 +58,8 @@ class TestCLIRun:
         assert result.exit_code == 0
         mock_instance.run.assert_called_once()
 
-    @patch("aml_toolkit.api.cli.setup_logging")
     @patch("aml_toolkit.api.cli.PipelineOrchestrator")
-    def test_run_with_mode_override(self, mock_orch_cls, mock_setup_log, tmp_path):
+    def test_run_with_mode_override(self, mock_orch_cls, tmp_path):
         csv_path = tmp_path / "data.csv"
         df = pd.DataFrame({"f1": [1, 2, 3], "label": [0, 1, 0]})
         df.to_csv(csv_path, index=False)
@@ -79,9 +77,8 @@ class TestCLIRun:
         result = runner.invoke(app, ["run", str(csv_path), "--mode", "conservative"])
         assert result.exit_code == 0
 
-    @patch("aml_toolkit.api.cli.setup_logging")
     @patch("aml_toolkit.api.cli.PipelineOrchestrator")
-    def test_run_with_seed_override(self, mock_orch_cls, mock_setup_log, tmp_path):
+    def test_run_with_seed_override(self, mock_orch_cls, tmp_path):
         csv_path = tmp_path / "data.csv"
         df = pd.DataFrame({"f1": [1, 2, 3], "label": [0, 1, 0]})
         df.to_csv(csv_path, index=False)

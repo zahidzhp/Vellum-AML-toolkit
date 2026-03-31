@@ -1,0 +1,33 @@
+# Research profile — all V2 features enabled including conformal + planner
+mode: AGGRESSIVE
+
+advanced:
+  run_history:
+    enabled: true
+    max_records: 5000
+  uncertainty:
+    enabled: true
+    use_calibrated_proba: true
+    conformal_enabled: true
+    conformal_coverage: 0.9
+    use_cross_val: true
+    cross_val_folds: 5
+  dynamic_ensemble:
+    enabled: true
+    diversity_threshold: 0.05
+    use_uncertainty_weights: true
+  meta_policy:
+    enabled: true
+    compute_budget_aware: true
+    recency_decay: 0.85
+  agentic_planner:
+    enabled: true
+    mode: propose_only
+    max_suggestions: 5
+    track_proposal_outcomes: true
+  version_features:
+    uncertainty: true
+    dynamic_ensemble: true
+    meta_policy: true
+    agentic_planner: true
+    run_history: true

@@ -1,0 +1,10 @@
+# Conservative profile — all V2 features disabled, safe defaults
+mode: CONSERVATIVE
+
+advanced:
+  version_features:
+    uncertainty: false
+    dynamic_ensemble: false
+    meta_policy: false
+    agentic_planner: false
+    run_history: false

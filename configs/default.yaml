@@ -100,3 +100,51 @@ compute:
   memory_limit_gb: null
   gpu_enabled: true
   resource_abstention_on_oom: true
+
+advanced:
+  run_history:
+    enabled: false
+    store_path: "~/.aml_toolkit/run_history.jsonl"
+    max_records: 1000
+  uncertainty:
+    enabled: false
+    methods: [entropy, margin]
+    aggregation: mean
+    abstain_if_above: 0.8
+    affects_ranking: false
+    use_calibrated_proba: true
+    conformal_enabled: false
+    conformal_coverage: 0.9
+    use_cross_val: false
+    cross_val_folds: 5
+  dynamic_ensemble:
+    enabled: false
+    allowed_modes: [greedy_diverse]
+    max_members: 4
+    allow_per_sample: false
+    min_evidence_models: 3
+    diversity_threshold: 0.05
+    use_uncertainty_weights: false
+  meta_policy:
+    enabled: false
+    exploration_weight: 0.3
+    allow_skip_low_value: true
+    allow_reorder_only: true
+    never_override_user_constraints: true
+    compute_budget_aware: true
+    similarity_method: cosine
+    recency_decay: 0.9
+  agentic_planner:
+    enabled: false
+    mode: propose_only
+    max_suggestions: 3
+    allow_data_review_requests: false
+    allow_abstention_recommendation: true
+    llm_enhanced: false
+    track_proposal_outcomes: true
+  version_features:
+    uncertainty: false
+    dynamic_ensemble: false
+    meta_policy: false
+    agentic_planner: false
+    run_history: false

@@ -23,3 +23,4 @@ class CalibrationReport(BaseModel):
     results: list[CalibrationResult] = Field(default_factory=list)
     primary_objective: str = "ece"
     warnings: list[str] = Field(default_factory=list)
+    plot_data: dict[str, dict] = Field(default_factory=dict, exclude=True)

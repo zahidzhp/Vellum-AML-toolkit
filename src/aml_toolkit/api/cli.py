@@ -9,9 +9,10 @@ from typing import Optional
 import typer
 from rich.console import Console
 
+import logging
+
 from aml_toolkit.core.config import load_config
 from aml_toolkit.core.enums import OperatingMode
-from aml_toolkit.core.logging_utils import setup_logging
 from aml_toolkit.orchestration.orchestrator import PipelineOrchestrator
 
 app = typer.Typer(
@@ -32,9 +33,10 @@ def run(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging."),
 ) -> None:
     """Run the full pipeline on a dataset."""
-    # Setup logging
-    log_level = "DEBUG" if verbose else "INFO"
-    setup_logging(level=log_level)
+    # Setup basic console logging before orchestrator creates a run
+    log_level = logging.DEBUG if verbose else logging.INFO
+    logging.basicConfig(level=log_level, format="[%(asctime)s] %(levelname)-8s %(message)s", datefmt="%H:%M:%S")
+    logging.getLogger("aml_toolkit").setLevel(log_level)
 
     # Build config with overrides
     overrides = {}
@@ -79,7 +81,8 @@ def validate(
     config: Optional[Path] = typer.Option(None, "--config", "-c", help="Path to a YAML config file."),
 ) -> None:
     """Validate a dataset without running the full pipeline."""
-    setup_logging(level="INFO")
+    logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)-8s %(message)s", datefmt="%H:%M:%S")
+    logging.getLogger("aml_toolkit").setLevel(logging.INFO)
 
     toolkit_config = load_config(config_path=config)
 

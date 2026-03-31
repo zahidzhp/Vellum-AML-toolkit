@@ -93,3 +93,7 @@ class CandidateModel(ABC):
         Args:
             path: Destination path.
         """
+
+    def get_backbone(self) -> str | None:
+        """Return the backbone/architecture name if applicable (e.g., 'resnet18', 'vit_small_patch16_224')."""
+        return None

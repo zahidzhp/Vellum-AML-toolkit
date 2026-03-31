@@ -58,10 +58,20 @@ class FeatureImportanceStrategy(ExplainabilityStrategy):
             ],
         }
 
+        artifact_paths = [str(npy_path)]
+
+        # Bar chart
+        from aml_toolkit.reporting.plot_utils import plot_feature_importance
+        chart_path = plot_feature_importance(
+            importances, None, top_k, output_dir / "feature_importance_chart.png"
+        )
+        if chart_path:
+            artifact_paths.append(chart_path)
+
         return ExplainabilityOutput(
             method=self.method_name(),
             candidate_id="",
-            artifact_paths=[str(npy_path)],
+            artifact_paths=artifact_paths,
             summary=summary,
         )
 

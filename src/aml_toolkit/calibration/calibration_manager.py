@@ -51,11 +51,13 @@ def run_calibration(
 
     for candidate_id, model in trained_models.items():
         try:
-            result = _calibrate_candidate(
+            result, plot_data = _calibrate_candidate(
                 candidate_id, model, X_val, y_val, cal_config.enabled_methods,
                 cal_config.primary_objective,
             )
             report.results.append(result)
+            if plot_data:
+                report.plot_data[candidate_id] = plot_data
         except CalibrationFailureError as e:
             logger.warning(f"Calibration failed for {candidate_id}: {e}")
             report.warnings.append(f"{candidate_id}: {e}")
@@ -73,10 +75,10 @@ def _calibrate_candidate(
     y_val: np.ndarray,
     enabled_methods: list[str],
     primary_objective: str,
-) -> CalibrationResult:
+) -> tuple[CalibrationResult, dict]:
     """Calibrate a single candidate.
 
-    Returns the best calibration result based on the primary objective.
+    Returns (best CalibrationResult, plot_data dict with proba_before/after).
     """
     # Check probabilistic
     if not model.is_probabilistic():
@@ -85,7 +87,7 @@ def _calibrate_candidate(
             method="none",
             objective_metric=primary_objective,
             notes=["Non-probabilistic model; calibration skipped."],
-        )
+        ), {}
 
     raw_proba = model.predict_proba(X_val)
     if raw_proba is None:
@@ -94,7 +96,7 @@ def _calibrate_candidate(
             method="none",
             objective_metric=primary_objective,
             notes=["predict_proba returned None; calibration skipped."],
-        )
+        ), {}
 
     # Extract positive-class probabilities for binary case
     proba_pos = _extract_positive_class_proba(raw_proba)
@@ -131,6 +133,7 @@ def _calibrate_candidate(
         )
 
     # Threshold optimization on calibrated probabilities
+    calibrated_for_threshold = proba_pos  # fallback
     try:
         optimizer = ThresholdOptimizer(metric="f1")
         # Re-calibrate with the winning method to get calibrated proba
@@ -147,7 +150,15 @@ def _calibrate_candidate(
         logger.warning(f"Threshold optimization failed for {candidate_id}: {e}")
         best_result.notes.append(f"Threshold optimization failed: {e}")
 
-    return best_result
+    # Capture before/after proba for visualization (only for binary case)
+    plot_data: dict = {}
+    if proba_pos.ndim == 1:
+        plot_data = {
+            "proba_before": proba_pos,
+            "proba_after": calibrated_for_threshold,
+        }
+
+    return best_result, plot_data
 
 
 def _extract_positive_class_proba(proba: np.ndarray) -> np.ndarray:

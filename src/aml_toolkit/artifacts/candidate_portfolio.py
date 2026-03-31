@@ -11,6 +11,7 @@ class CandidateEntry(BaseModel):
     candidate_id: str
     model_family: str
     model_name: str
+    backbone: str | None = None
     warmup_epochs: int = 5
     budget_allocation: float = 1.0
     rejection_reason: str | None = None

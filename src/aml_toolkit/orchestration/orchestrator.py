@@ -295,6 +295,7 @@ class PipelineOrchestrator:
                 ),
             )
             self.artifacts["best_candidate_id"] = best_id
+            self._generate_training_plots(exec_result, best_id)
             self.state.transition(PipelineStage.MODEL_SELECTED)
             self.audit.log("MODEL_SELECTED", "training_complete", {"best": best_id})
         else:
@@ -349,6 +350,7 @@ class PipelineOrchestrator:
             cal_report = CalibrationReport()
 
         self.artifacts["calibration_report"] = cal_report
+        self._generate_calibration_plots(cal_report)
         self.state.transition(PipelineStage.CALIBRATED)
         self.audit.log("CALIBRATED", "calibration_complete")
 
@@ -410,6 +412,80 @@ class PipelineOrchestrator:
         self.artifacts["explainability_report"] = exp_report
         self.state.transition(PipelineStage.EXPLAINED)
         self.audit.log("EXPLAINED", "explainability_complete")
+
+    def _generate_training_plots(self, exec_result: Any, best_id: str) -> None:
+        """Generate learning curves, classification report, ROC, and PR plots after training."""
+        if self._run_dir is None:
+            return
+        from aml_toolkit.reporting.plot_utils import (
+            plot_classification_report,
+            plot_learning_curves,
+            plot_precision_recall_curve,
+            plot_roc_curve,
+        )
+
+        plots_dir = self._run_dir / "plots"
+        plot_paths: dict[str, str] = self.artifacts.setdefault("plot_paths", {})
+
+        for trace in exec_result.traces:
+            if trace.status == "completed" and trace.training_trace:
+                path = plot_learning_curves(
+                    trace.training_trace,
+                    plots_dir / f"learning_curves_{trace.candidate_id}.png",
+                )
+                if path:
+                    plot_paths[f"learning_curves_{trace.candidate_id}"] = path
+
+        best_model = self.artifacts["trained_models"].get(best_id)
+        if best_model is not None:
+            X_val = self._get_model_x_val(best_model)
+            y_val = self.artifacts["y_val"]
+            try:
+                y_pred = best_model.predict(X_val)
+                path = plot_classification_report(y_val, y_pred, None, plots_dir / "classification_report.png")
+                if path:
+                    plot_paths["classification_report"] = path
+
+                if best_model.is_probabilistic():
+                    proba = best_model.predict_proba(X_val)
+                    if proba is not None and proba.ndim == 2 and proba.shape[1] == 2:
+                        y_score = proba[:, 1]
+                        path = plot_roc_curve(y_val, y_score, plots_dir / "roc_curve.png")
+                        if path:
+                            plot_paths["roc_curve"] = path
+                        path = plot_precision_recall_curve(y_val, y_score, plots_dir / "precision_recall_curve.png")
+                        if path:
+                            plot_paths["precision_recall_curve"] = path
+            except Exception as e:
+                logger.warning(f"Training plot generation failed: {e}")
+
+    def _generate_calibration_plots(self, cal_report: Any) -> None:
+        """Generate calibration reliability diagrams and threshold sweep curves."""
+        if self._run_dir is None or not cal_report.plot_data:
+            return
+        from aml_toolkit.reporting.plot_utils import plot_calibration_diagram, plot_threshold_vs_metric
+
+        plots_dir = self._run_dir / "plots"
+        plot_paths: dict[str, str] = self.artifacts.setdefault("plot_paths", {})
+        y_val = self.artifacts["y_val"]
+
+        for candidate_id, data in cal_report.plot_data.items():
+            proba_before = data.get("proba_before")
+            proba_after = data.get("proba_after")
+            if proba_before is None or proba_after is None:
+                continue
+            path = plot_calibration_diagram(
+                y_val, proba_before, proba_after, 10,
+                plots_dir / f"calibration_{candidate_id}.png",
+            )
+            if path:
+                plot_paths[f"calibration_{candidate_id}"] = path
+            path = plot_threshold_vs_metric(
+                y_val, proba_after, "f1",
+                plots_dir / f"threshold_{candidate_id}.png",
+            )
+            if path:
+                plot_paths[f"threshold_{candidate_id}"] = path
 
     def _finalize(self) -> None:
         self.artifacts["final_status"] = PipelineStage.COMPLETED

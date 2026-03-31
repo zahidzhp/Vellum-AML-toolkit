@@ -1,0 +1,23 @@
+# Advanced profile — uncertainty + dynamic ensemble + meta-policy enabled
+mode: AGGRESSIVE
+
+advanced:
+  run_history:
+    enabled: true
+  uncertainty:
+    enabled: true
+    use_calibrated_proba: true
+    conformal_enabled: true
+    conformal_coverage: 0.9
+  dynamic_ensemble:
+    enabled: true
+    diversity_threshold: 0.05
+  meta_policy:
+    enabled: true
+    compute_budget_aware: true
+  version_features:
+    uncertainty: true
+    dynamic_ensemble: true
+    meta_policy: true
+    run_history: true
+    agentic_planner: false

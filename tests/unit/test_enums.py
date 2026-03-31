@@ -56,8 +56,9 @@ def test_pipeline_stage_members():
 
 
 def test_abstention_reason_members():
-    assert len(AbstentionReason) == 5
+    assert len(AbstentionReason) == 6  # 5 original + HIGH_UNCERTAINTY (Phase 2.3)
     assert AbstentionReason.RESOURCE_EXHAUSTED.value == "RESOURCE_EXHAUSTED"
+    assert AbstentionReason.HIGH_UNCERTAINTY.value == "HIGH_UNCERTAINTY"
 
 
 def test_split_strategy_members():

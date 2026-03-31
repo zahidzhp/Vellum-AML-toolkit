@@ -51,6 +51,7 @@ def create_run_directory(
         "ensemble",
         "explainability",
         "explainability/heatmaps",
+        "plots",
         "reporting",
         "logs",
     ]

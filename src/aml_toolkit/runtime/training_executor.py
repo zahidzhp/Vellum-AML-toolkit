@@ -24,6 +24,7 @@ class CandidateExecutionTrace:
 
     candidate_id: str
     model_family: str
+    backbone: str | None = None
     status: str = "pending"  # pending, completed, failed, abstained
     metrics: dict[str, float] = field(default_factory=dict)
     training_trace: dict[str, list[float]] = field(default_factory=dict)
@@ -180,6 +181,7 @@ def run_training(
             trace.status = "completed"
             trace.metrics = eval_metrics
             trace.training_trace = adapter.get_training_trace()
+            trace.backbone = adapter.get_backbone()
             trace.elapsed_seconds = resource_guard.elapsed_seconds()
 
             result.trained_models[candidate.candidate_id] = adapter

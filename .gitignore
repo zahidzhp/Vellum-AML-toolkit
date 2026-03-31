@@ -1,0 +1,21 @@
+# Knowledge / reference documents (local only)
+knowledge/
+
+# Virtual environment
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Pipeline outputs
+outputs/
+
+# OS
+.DS_Store

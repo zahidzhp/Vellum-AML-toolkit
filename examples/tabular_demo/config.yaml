@@ -1,0 +1,15 @@
+mode: BALANCED
+seed: 42
+
+dataset:
+  target_column: label
+
+candidates:
+  allowed_families:
+    - logistic
+    - rf
+  max_candidates: 2
+
+compute:
+  max_training_time_seconds: 60
+  gpu_enabled: false

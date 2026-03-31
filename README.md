@@ -1,6 +1,10 @@
 # Autonomous ML Toolkit (AML Toolkit)
 
-A modular, policy-driven machine learning toolkit that autonomously handles classification tasks end-to-end. Point it at a dataset, and it will validate, profile, train, calibrate, and explain — producing a full audit trail of every decision made.
+A modular, policy-driven machine learning toolkit that autonomously handles classification tasks end-to-end — including data validation, profiling, training, calibration, explainability, and adaptive intelligence across tabular and image data.
+
+Point it at a dataset and it validates, profiles, trains, calibrates, and explains — producing a full audit trail of every decision. The **V2 Adaptive Intelligence Layer** adds uncertainty quantification, diversity-aware ensemble pruning, historical meta-policy, and experiment planning on top of the core pipeline.
+
+---
 
 ## What It Does
 
@@ -13,11 +17,13 @@ Given a dataset (tabular CSV, image folder, or embedding matrix), the toolkit au
 5. **Plans interventions** — selects class weighting, resampling, augmentation, or thresholding based on evidence (blocks unsafe interventions like oversampling when label noise is high)
 6. **Trains candidate models** with runtime decision-making — warm-up gates prevent premature termination, underperformers are stopped early, and resource failures trigger structured abstention
 7. **Calibrates outputs** via temperature scaling or isotonic regression, then optimizes decision thresholds
-8. **Builds ensembles** only when the gain over the best single model exceeds a configurable threshold
+8. **Builds ensembles** — soft voting, weighted averaging, or diversity-aware greedy selection (V2)
 9. **Generates explainability artifacts** — feature importance, SHAP values, GradCAM heatmaps — with faithfulness checks
-10. **Produces reports and audit logs** — JSON and Markdown reports, plus a timestamped audit log of every pipeline event
+10. **Produces reports and audit logs** — JSON and Markdown reports, visualizations, and a timestamped audit log of every pipeline event
 
-If the toolkit determines it cannot produce a trustworthy result (leakage detected, all models fail, resource exhaustion), it **abstains** with a structured reason rather than producing a misleading output.
+If the toolkit determines it cannot produce a trustworthy result (leakage detected, all models fail, resource exhaustion, or high uncertainty), it **abstains** with a structured reason rather than producing a misleading output.
+
+---
 
 ## Supported Inputs
 
@@ -29,7 +35,7 @@ If the toolkit determines it cannot produce a trustworthy result (leakage detect
 
 Task types: binary classification, multiclass classification, multilabel classification.
 
-### Image Classification Details
+### Image Classification
 
 The toolkit supports image classification via folder-per-class directory structure:
 
@@ -40,33 +46,24 @@ images/
     img_002.jpg
   dog/
     img_003.jpg
-    img_004.jpg
-  bird/
-    img_005.jpg
 ```
 
-Supported image formats: `.jpg`, `.jpeg`, `.png`, `.bmp`, `.tiff`, `.webp`.
+Supported formats: `.jpg`, `.jpeg`, `.png`, `.bmp`, `.tiff`, `.webp`.
 
 **How it works:**
 
-1. **Auto-detection**: The toolkit detects image modality when the dataset path is a directory
-2. **Feature extraction**: Images are converted to embeddings using a configurable pretrained backbone (default: ResNet18). This enables probing and the embedding-based pipeline
-3. **CNN training** (aggressive mode): Transfer learning with any torchvision ResNet variant — freezes backbone, trains classification head, then fine-tunes the last residual block
-4. **ViT training** (aggressive mode): Transfer learning with any timm ViT variant — freezes backbone, trains classification head
-5. **GradCAM heatmaps**: Real hook-based Grad-CAM for CNN models, producing spatial heatmaps highlighting discriminative regions
+1. **Auto-detection**: Detects image modality when the dataset path is a directory
+2. **Feature extraction**: Images are converted to embeddings using a configurable pretrained backbone (default: ResNet18)
+3. **CNN training** (aggressive mode): Transfer learning with any torchvision ResNet — freezes backbone, trains head, then fine-tunes last residual block
+4. **ViT training** (aggressive mode): Transfer learning with any timm ViT variant
+5. **GradCAM heatmaps**: Hook-based Grad-CAM for CNN models
 
 **Configurable backbones:**
 
 ```yaml
 candidates:
-  # Any torchvision ResNet: resnet18, resnet34, resnet50, resnet101, resnet152,
-  # wide_resnet50_2, resnext50_32x4d, resnext101_32x8d, etc.
-  cnn_backbone: resnet50
-
-  # Any timm ViT: vit_small_patch16_224, vit_base_patch16_224, vit_large_patch16_224, etc.
-  vit_backbone: vit_base_patch16_224
-
-  # Backbone used for the shared feature extractor (probes + embedding pipeline)
+  cnn_backbone: resnet50              # Any torchvision ResNet variant
+  vit_backbone: vit_base_patch16_224  # Any timm ViT variant
   feature_extractor_backbone: resnet18
 ```
 
@@ -78,70 +75,175 @@ candidates:
 | cnn | No | No | Yes | No |
 | vit | No | No | Yes | No |
 
-In **balanced** mode, image datasets are classified using the `embedding_head` adapter (logistic regression on extracted features). For CNN/ViT training, use `--mode aggressive`.
+---
+
+## V2 Adaptive Intelligence Layer
+
+The V2 layer sits on top of the core pipeline and adds four opt-in adaptive capabilities. All features are **disabled by default**, modality-agnostic (tabular and image), and degrade gracefully — a V2 failure never aborts the pipeline.
+
+### Run History Store
+
+Persists a summary of each completed run to a JSONL file. Future runs query this store to find similar past datasets using **cosine similarity on a numerical feature vector** (not coarse categorical buckets).
+
+```yaml
+advanced:
+  run_history:
+    enabled: true
+    store_path: ~/.aml_toolkit/run_history.jsonl
+    max_records: 1000
+```
+
+Dataset signatures encode: log(n_samples), log(n_features), imbalance ratio, missingness %, OOD shift score, label noise score, and derived flags — all normalized to [0, 1] for cosine similarity.
+
+### Uncertainty Quantification
+
+Estimates predictive uncertainty on calibrated probabilities (zero extra inference — reuses `cal_report.plot_data`). Three methods:
+
+- **Entropy**: normalized Shannon entropy H(p) / log(K)
+- **Margin**: 1 − (p_max − p_2nd_max)
+- **Conformal prediction sets**: mathematically guaranteed coverage (LAC algorithm, numpy-only)
+
+```yaml
+advanced:
+  uncertainty:
+    enabled: true
+    methods: [entropy, margin]
+    abstain_if_above: 0.8         # Trigger HIGH_UNCERTAINTY abstention
+    use_calibrated_proba: true    # Use cal_report.plot_data — zero extra inference
+    conformal_enabled: true       # Prediction sets with coverage guarantee
+    conformal_coverage: 0.9       # P(y ∈ C(x)) ≥ 0.9
+```
+
+When `conformal_enabled: true`, each sample gets a **prediction set** C(x) with a provable guarantee that the true label is included at least 90% of the time. Smaller sets = more confident model.
+
+### Dynamic Ensemble (Diversity-Aware)
+
+Replaces soft voting and weighted averaging with **forward greedy pruning**. Scores candidates by:
+
+```
+score = F1_gain + λ × pairwise_disagreement
+```
+
+Clones (disagreement < `diversity_threshold`) are rejected even if their individual F1 is high. This prevents redundant models from diluting ensemble diversity.
+
+```yaml
+advanced:
+  dynamic_ensemble:
+    enabled: true
+    diversity_threshold: 0.05   # Min pairwise disagreement to add a model
+    max_members: 4
+    use_uncertainty_weights: false
+```
+
+EnsembleReport gains `diversity_score` and `ambiguity_decomposition` (bias/variance/diversity/error breakdown).
+
+### Meta-Policy Engine
+
+Before training, queries run history to **reorder candidates** and **allocate compute budgets** based on which families worked best on similar datasets:
+
+```
+score = Σ (cosine_sim × recency_decay^days_ago × family_won)
+budget_fraction = softmax(scores)  # sums to 1.0
+```
+
+```yaml
+advanced:
+  meta_policy:
+    enabled: true
+    compute_budget_aware: true  # Allocate compute fractions per candidate
+    recency_decay: 0.9          # Weight recent history more
+    similarity_method: cosine
+```
+
+Result: promising families get more training time; families that never won on similar data get less.
+
+### Experiment Planner
+
+After each run, generates actionable proposals for the next experiment using a rule engine (always runs) and an optional LLM enhancement (Claude API, opt-in):
+
+```yaml
+advanced:
+  agentic_planner:
+    enabled: true
+    mode: propose_only           # propose_only (safe) or auto_apply
+    max_suggestions: 3
+    llm_enhanced: false          # Set true + ANTHROPIC_API_KEY to enable
+    track_proposal_outcomes: true
+```
+
+Built-in rules cover: severe imbalance → class weighting, high ECE → reduce candidates, OOD shift → conservative mode, small image dataset → augmentation + ResNet18 preference, high uncertainty → k-fold cross-validation.
+
+LLM proposals can only **add** suggestions — they never override the rule engine, and all proposals are constrained by user config.
+
+### Efficiency: Zero Redundant Inference
+
+All V2 features reuse already-computed artifacts:
+
+```
+Calibration stage → proba_before, proba_after stored in cal_report.plot_data
+                              │
+          ┌───────────────────┼────────────────────┐
+          ▼                   ▼                    ▼
+UncertaintyEstimator   EnsemblePruner      ConformalPredictor
+(uses proba_after)     (uses proba_after)  (uses proba_after)
+```
+
+For expensive CNN/ViT inference on image datasets, the calibration pass is the only extra pass. All V2 analysis is free after that.
+
+### Profile-Based Presets
+
+Four ready-to-use profiles in `configs/profiles/`:
+
+| Profile | V2 Features |
+|---------|-------------|
+| `conservative.yaml` | All V2 off |
+| `balanced.yaml` | Run history + uncertainty |
+| `advanced.yaml` | + Conformal + dynamic ensemble + meta-policy |
+| `research.yaml` | All V2 on, k-fold uncertainty, LLM-ready |
+
+```bash
+aml-toolkit run data.csv --config configs/profiles/advanced.yaml
+```
+
+---
 
 ## Installation
 
 Requires Python 3.11 or later.
 
 ```bash
-# Clone the repository
 git clone <repository-url>
 cd Vellum
 
-# Create a virtual environment
 python3.11 -m venv .venv
 source .venv/bin/activate
 
-# Install with dependencies
 pip install -e .
-
-# Install dev dependencies (for running tests)
-pip install -e ".[dev]"
+pip install -e ".[dev]"   # for running tests
 ```
+
+---
 
 ## Quick Start
 
-### Run the full pipeline
-
 ```bash
+# Run the full pipeline (V1 behavior — all V2 off)
 aml-toolkit run data.csv
-```
 
-This will:
-- Auto-detect that `data.csv` is tabular with a `label` column
-- Run all 10 pipeline stages
-- Write outputs to `outputs/<run_id>/`
-- Print the final status and recommendation
-
-### Validate a dataset without training
-
-```bash
+# Validate dataset without training
 aml-toolkit validate data.csv
-```
 
-Runs intake and validation only — useful for checking your data before a full run.
-
-### Specify a config file
-
-```bash
+# Run with a config file
 aml-toolkit run data.csv --config my_config.yaml
-```
 
-### Run on an image folder
-
-```bash
-# Balanced mode: uses embedding_head (logistic regression on extracted features)
+# Image classification (embedding_head, balanced)
 aml-toolkit run images/
 
-# Aggressive mode: trains CNN/ViT via transfer learning
+# Image with CNN transfer learning (aggressive)
 aml-toolkit run images/ --mode aggressive
-```
 
-### Override options from the command line
-
-```bash
-aml-toolkit run data.csv --mode conservative --seed 99 --output-dir results/ --verbose
+# Run with all V2 features enabled
+aml-toolkit run data.csv --config configs/profiles/research.yaml
 ```
 
 ## CLI Reference
@@ -153,12 +255,12 @@ Arguments:
   DATASET              Path to the input dataset (CSV or directory)
 
 Options:
-  -c, --config PATH    Path to a YAML config file
-  -m, --mode TEXT      Operating mode: conservative, balanced, aggressive, interpretable
+  -c, --config PATH      Path to a YAML config file
+  -m, --mode TEXT        Operating mode: conservative, balanced, aggressive, interpretable
   -o, --output-dir TEXT  Override output directory
-  --seed INTEGER       Random seed override
-  -v, --verbose        Enable verbose (DEBUG-level) logging
-  --help               Show help and exit
+  --seed INTEGER         Random seed override
+  -v, --verbose          Enable verbose (DEBUG-level) logging
+  --help                 Show help and exit
 
 aml-toolkit validate <DATASET> [OPTIONS]
 
@@ -170,13 +272,15 @@ Options:
   --help               Show help and exit
 ```
 
+---
+
 ## Configuration
 
-All behavior is controlled through YAML config files. The toolkit loads configuration in layers, where each layer overrides the previous:
+Configuration loads in layers (later overrides earlier):
 
 1. `configs/default.yaml` — baseline defaults
 2. `configs/modes/<mode>.yaml` — mode-specific overrides
-3. Your custom config file (`--config`)
+3. Your config file (`--config`)
 4. CLI arguments (`--seed`, `--output-dir`, etc.)
 
 ### Operating Modes
@@ -184,52 +288,41 @@ All behavior is controlled through YAML config files. The toolkit loads configur
 | Mode | Description |
 |------|-------------|
 | **balanced** (default) | Balances thoroughness with compute efficiency |
-| **conservative** | Tighter safety thresholds, fewer candidates, longer warm-up, strict overfit limits |
-| **aggressive** | Wider candidate pools (including CNNs, ViTs), longer training budgets, relaxed thresholds |
-| **interpretable** | Restricts to inherently interpretable models and explanations |
+| **conservative** | Tighter safety thresholds, fewer candidates, strict overfit limits |
+| **aggressive** | Wider candidate pools (CNN, ViT), longer budgets, relaxed thresholds |
+| **interpretable** | Restricts to inherently interpretable models |
 
-### Configuration Sections
-
-A config file can override any of these sections. Only include the fields you want to change — everything else uses the default.
+### Core Configuration Sections
 
 ```yaml
 # Dataset settings
 dataset:
-  target_column: label        # Name of the target/label column
-  group_column: patient_id    # Column for grouped splitting (optional)
-  time_column: date           # Column for temporal splitting (optional)
-  modality_override: TABULAR  # Force a modality instead of auto-detect (optional)
+  target_column: label
+  group_column: patient_id    # Optional: grouped splitting
+  time_column: date           # Optional: temporal splitting
+  modality_override: TABULAR  # Optional: force modality
 
-# Splitting strategy
+# Splitting
 splitting:
-  strategy: STRATIFIED         # STRATIFIED, GROUPED, TEMPORAL, or PROVIDED
+  strategy: STRATIFIED        # STRATIFIED, GROUPED, TEMPORAL, PROVIDED
   test_ratio: 0.2
   val_ratio: 0.1
   random_seed: 42
 
-# Data profiling thresholds
+# Data profiling
 profiling:
-  imbalance_ratio_warning: 5.0   # Warn if minority/majority ratio exceeds this
-  imbalance_ratio_severe: 20.0   # Flag as severe imbalance above this
+  imbalance_ratio_warning: 5.0
+  imbalance_ratio_severe: 20.0
   duplicate_check_enabled: true
-  ood_shift_enabled: true         # Enable train/test distribution shift detection
+  ood_shift_enabled: true
 
 # Probe engine
 probes:
-  enabled_probes:               # Which probe models to run
-    - majority
-    - stratified
-    - logistic
-    - rf
-    - xgb
-  intervention_branches:         # Test these intervention strategies during probing
-    - none
-    - class_weighting
-    - oversampling
-    - undersampling
-  metric: macro_f1               # Primary metric for probe comparison
+  enabled_probes: [majority, stratified, logistic, rf, xgb]
+  intervention_branches: [none, class_weighting, oversampling, undersampling]
+  metric: macro_f1
 
-# Intervention planner
+# Interventions
 interventions:
   allowed_types:
     - CLASS_WEIGHTING
@@ -239,111 +332,142 @@ interventions:
     - FOCAL_LOSS
     - THRESHOLDING
     - CALIBRATION
-  oversampling_noise_risk_threshold: 0.15  # Block oversampling if label noise exceeds this
+  oversampling_noise_risk_threshold: 0.15
   require_calibration_when_imbalanced: true
 
-# Candidate model selection
+# Candidates
 candidates:
-  allowed_families:              # Model families to consider
-    - logistic
-    - rf
-    - xgb
-    - mlp
-    - embedding_head             # Logistic regression on embeddings (image/embedding modality)
+  allowed_families: [logistic, rf, xgb, mlp, embedding_head]
   max_candidates: 5
-  budget_strategy: equal         # How to allocate compute across candidates
-  cnn_backbone: resnet18         # Any torchvision ResNet variant
-  vit_backbone: vit_small_patch16_224  # Any timm ViT variant
-  feature_extractor_backbone: resnet18  # Backbone for shared feature extraction
+  budget_strategy: equal
+  cnn_backbone: resnet18
+  vit_backbone: vit_small_patch16_224
+  feature_extractor_backbone: resnet18
 
-# Runtime decision engine
+# Runtime decisions
 runtime_decision:
-  min_warmup_epochs_default: 5   # Minimum epochs before stopping (non-neural)
-  min_warmup_epochs_neural: 10   # Minimum epochs before stopping (neural)
-  improvement_slope_threshold: 0.001  # Stop if improvement slope drops below this
-  overfit_gap_limit: 0.15        # Stop if train-val gap exceeds this
-  patience: 3                    # Epochs of no improvement before stopping
+  min_warmup_epochs_default: 5
+  min_warmup_epochs_neural: 10
+  improvement_slope_threshold: 0.001
+  overfit_gap_limit: 0.15
+  patience: 3
 
 # Calibration
 calibration:
-  enabled_methods:
-    - temperature_scaling
-    - isotonic
-  primary_objective: ece         # Optimize for ECE (expected calibration error) or brier
+  enabled_methods: [temperature_scaling, isotonic]
+  primary_objective: ece     # ece or brier
 
-# Ensemble building
+# Ensemble
 ensemble:
-  enabled_strategies:
-    - soft_voting
-    - weighted_averaging
-  marginal_gain_threshold: 0.01  # Only ensemble if gain over best single model exceeds this
+  enabled_strategies: [soft_voting, weighted_averaging]
+  marginal_gain_threshold: 0.01
   max_ensemble_size: 3
 
 # Explainability
 explainability:
-  tabular_methods:
-    - feature_importance
-    - shap
-  image_methods:
-    - gradcam
-  faithfulness_enabled: true     # Run faithfulness checks on explanations
+  tabular_methods: [feature_importance, shap]
+  image_methods: [gradcam]
+  faithfulness_enabled: true
 
 # Reporting
 reporting:
-  output_dir: outputs            # Base output directory
-  formats:
-    - json
-    - markdown
+  output_dir: outputs
+  formats: [json, markdown]
   verbosity: normal
 
 # Compute budget
 compute:
-  max_training_time_seconds: 3600  # Total training time budget
-  memory_limit_gb: null            # Memory limit (null = no limit)
+  max_training_time_seconds: 3600
+  memory_limit_gb: null
   gpu_enabled: true
-  resource_abstention_on_oom: true # Abstain instead of crashing on OOM
+  resource_abstention_on_oom: true
 ```
 
-### Example: Custom Config for Medical Imaging
+### V2 Advanced Configuration
 
 ```yaml
-# medical_imaging_config.yaml
+advanced:
+  # Persist run history for future similarity-based recommendations
+  run_history:
+    enabled: true
+    store_path: ~/.aml_toolkit/run_history.jsonl
+    max_records: 1000
+
+  # Uncertainty estimation (uses calibrated probabilities — zero extra inference)
+  uncertainty:
+    enabled: true
+    methods: [entropy, margin]
+    aggregation: mean
+    abstain_if_above: 0.8       # HIGH_UNCERTAINTY abstention threshold
+    use_calibrated_proba: true
+    conformal_enabled: true     # Prediction sets with coverage guarantee
+    conformal_coverage: 0.9     # 1-α coverage
+    use_cross_val: false        # k-fold uncertainty for small datasets
+    cross_val_folds: 5
+
+  # Diversity-aware ensemble selection
+  dynamic_ensemble:
+    enabled: true
+    allowed_modes: [greedy_diverse]
+    max_members: 4
+    diversity_threshold: 0.05   # Minimum pairwise disagreement to admit a model
+    use_uncertainty_weights: false
+
+  # History-based candidate ordering and compute budget allocation
+  meta_policy:
+    enabled: true
+    exploration_weight: 0.3     # Fraction of budget allocated uniformly
+    compute_budget_aware: true
+    similarity_method: cosine
+    recency_decay: 0.9          # Per-day decay for historical records
+
+  # Experiment proposal engine
+  agentic_planner:
+    enabled: true
+    mode: propose_only          # propose_only is safe; auto_apply requires caution
+    max_suggestions: 3
+    llm_enhanced: false         # Requires ANTHROPIC_API_KEY
+    track_proposal_outcomes: true
+```
+
+### Example: Medical Imaging (Aggressive + V2)
+
+```yaml
 mode: AGGRESSIVE
 
 candidates:
-  allowed_families:
-    - embedding_head
-    - cnn
+  allowed_families: [embedding_head, cnn]
   max_candidates: 2
-  cnn_backbone: resnet50         # Larger backbone for medical images
-  feature_extractor_backbone: resnet50
+  cnn_backbone: resnet50
 
 compute:
   max_training_time_seconds: 1200
   gpu_enabled: true
+
+advanced:
+  uncertainty:
+    enabled: true
+    conformal_enabled: true
+    conformal_coverage: 0.95    # Higher coverage for medical use
+  dynamic_ensemble:
+    enabled: true
+    diversity_threshold: 0.05
 ```
 
-```bash
-aml-toolkit run xray_images/ --config medical_imaging_config.yaml
-```
-
-### Example: Tabular Data with Grouped Splitting
+### Example: Tabular with Grouped Splitting
 
 ```yaml
-# grouped_config.yaml
 mode: CONSERVATIVE
 
 dataset:
   target_column: diagnosis
-  group_column: patient_id  # Prevent same patient appearing in train and test
+  group_column: patient_id
 
 splitting:
   strategy: GROUPED
 
 candidates:
-  allowed_families:
-    - logistic
-    - rf
+  allowed_families: [logistic, rf]
   max_candidates: 2
 
 compute:
@@ -351,46 +475,41 @@ compute:
   gpu_enabled: false
 ```
 
-```bash
-aml-toolkit run patient_data.csv --config grouped_config.yaml
-```
+---
 
 ## Output Structure
 
-Each run creates a timestamped directory under the output path:
-
 ```
 outputs/
-  20260328_143022_a1b2c3/      # <date>_<time>_<hash>
-    intake/                     # Raw intake artifacts
-    audit/                      # Split audit results
-    profiling/                  # Data health profile
-    probes/                     # Probe model results
-    interventions/              # Intervention plan
-    candidates/                 # Candidate model artifacts
-    runtime/                    # Runtime decision log
-    calibration/                # Calibration results
-    ensemble/                   # Ensemble evaluation
-    explainability/             # Explanations and heatmaps
-      heatmaps/                 # GradCAM or confusion heatmaps
+  20260328_143022_a1b2c3/
+    intake/
+    audit/
+    profiling/
+    probes/
+    interventions/
+    candidates/
+    runtime/
+    calibration/
+    ensemble/
+    explainability/
+      heatmaps/
     reporting/
-      final_report.json         # Machine-readable report
-      final_report.md           # Human-readable report
+      final_report.json
+      final_report.md
+      plots/                     # Learning curves, ROC, PR, calibration diagrams
     logs/
-      audit_log.json            # Timestamped audit trail of every pipeline event
+      audit_log.json
 ```
 
-### Final Report
-
-The JSON report (`final_report.json`) includes:
+### Final Report Fields
 
 | Field | Description |
 |-------|-------------|
 | `run_id` | Unique run identifier |
 | `final_status` | `COMPLETED` or `ABSTAINED` |
-| `abstention_reason` | Why the pipeline abstained (if applicable) |
+| `abstention_reason` | Structured reason (see table below) |
 | `final_recommendation` | Recommended model or abstention explanation |
-| `stages_completed` | Ordered list of completed pipeline stages |
+| `stages_completed` | Ordered list of completed stages |
 | `dataset_summary` | Modality, task type, sample counts |
 | `split_audit_summary` | Leakage check results |
 | `profile_summary` | Data health flags and statistics |
@@ -399,34 +518,12 @@ The JSON report (`final_report.json`) includes:
 | `candidate_summary` | Candidate models and their configurations |
 | `runtime_decision_summary` | Per-candidate training decisions |
 | `calibration_summary` | Calibration method, ECE before/after, optimized threshold |
-| `ensemble_summary` | Whether ensemble was selected, gain over best single model |
-| `explainability_summary` | Explanation methods used, faithfulness results |
+| `ensemble_summary` | Strategy, members, diversity score (V2), ambiguity decomposition (V2) |
+| `explainability_summary` | Methods used, faithfulness results |
+| `plot_paths` | Paths to generated visualizations |
 | `warnings` | Any issues encountered during the run |
 
-### Audit Log
-
-The audit log (`audit_log.json`) is a timestamped sequence of every pipeline event:
-
-```json
-[
-  {"timestamp": "2026-03-28T14:30:22Z", "stage": "INIT", "event": "pipeline_start", "detail": {"run_id": "...", "dataset": "data.csv"}},
-  {"timestamp": "2026-03-28T14:30:23Z", "stage": "DATA_VALIDATED", "event": "intake_complete", "detail": {"modality": "TABULAR", "task_type": "BINARY"}},
-  {"timestamp": "2026-03-28T14:30:23Z", "stage": "DATA_VALIDATED", "event": "audit_passed", "detail": {}},
-  ...
-]
-```
-
-## Pipeline Stages
-
-The pipeline follows a strict stage order enforced by an internal state machine. No stage can be skipped, and the pipeline can transition to `ABSTAINED` from any stage.
-
-```
-INIT -> DATA_VALIDATED -> PROFILED -> PROBED -> INTERVENTION_SELECTED
-     -> TRAINING_ACTIVE -> MODEL_SELECTED -> CALIBRATED -> ENSEMBLED
-     -> EXPLAINED -> COMPLETED
-```
-
-At any point, the pipeline may transition to `ABSTAINED` if it determines a trustworthy result is not achievable. Abstention reasons include:
+### Abstention Reasons
 
 | Reason | Trigger |
 |--------|---------|
@@ -435,8 +532,25 @@ At any point, the pipeline may transition to `ABSTAINED` if it determines a trus
 | `RESOURCE_EXHAUSTED` | OOM or training time budget exceeded |
 | `NO_ROBUST_MODEL` | No candidate model passed quality thresholds |
 | `CRITICAL_FAILURE` | Unexpected error during pipeline execution |
+| `HIGH_UNCERTAINTY` | Mean predictive uncertainty exceeded configured threshold (V2) |
+
+---
+
+## Pipeline Stages
+
+```
+INIT → DATA_VALIDATED → PROFILED → PROBED → INTERVENTION_SELECTED
+     → TRAINING_ACTIVE → MODEL_SELECTED → CALIBRATED → ENSEMBLED
+     → EXPLAINED → COMPLETED
+```
+
+The pipeline transitions to `ABSTAINED` from any stage if a trustworthy result is not achievable.
+
+---
 
 ## Programmatic Usage
+
+### Basic
 
 ```python
 from aml_toolkit.core.config import ToolkitConfig
@@ -447,21 +561,35 @@ config = ToolkitConfig(
     candidates={"allowed_families": ["logistic", "rf"], "max_candidates": 2},
 )
 
-orchestrator = PipelineOrchestrator(config)
-report = orchestrator.run("data.csv")
-
+report = PipelineOrchestrator(config).run("data.csv")
 print(report.final_status)          # PipelineStage.COMPLETED
-print(report.final_recommendation)  # "Recommended model: logistic_001"
-print(report.warnings)              # Any issues encountered
+print(report.final_recommendation)  # "Recommended model: rf_001"
+```
+
+### With V2 Features
+
+```python
+from aml_toolkit.core.config import load_config
+from aml_toolkit.orchestration.orchestrator import PipelineOrchestrator
+
+# Load a pre-built profile
+config = load_config(config_path="configs/profiles/advanced.yaml")
+report = PipelineOrchestrator(config).run("data.csv")
+
+# Or enable specific V2 features programmatically
+config = load_config(overrides={
+    "advanced": {
+        "uncertainty": {"enabled": True, "conformal_enabled": True},
+        "dynamic_ensemble": {"enabled": True, "diversity_threshold": 0.05},
+        "meta_policy": {"enabled": True},
+    }
+})
 ```
 
 ### Image Classification
 
 ```python
-from aml_toolkit.core.config import ToolkitConfig
-from aml_toolkit.orchestration.orchestrator import PipelineOrchestrator
-
-# Balanced mode: embedding_head (logistic regression on extracted ResNet features)
+# Balanced: embedding_head (logistic on ResNet features)
 config = ToolkitConfig(
     dataset={"path": "images/"},
     candidates={"allowed_families": ["embedding_head"], "max_candidates": 1},
@@ -469,7 +597,7 @@ config = ToolkitConfig(
 )
 report = PipelineOrchestrator(config).run("images/")
 
-# Aggressive mode: CNN transfer learning with a specific ResNet backbone
+# Aggressive: CNN transfer learning
 config = ToolkitConfig(
     dataset={"path": "images/"},
     candidates={
@@ -482,24 +610,46 @@ config = ToolkitConfig(
 report = PipelineOrchestrator(config).run("images/")
 ```
 
-### Using Individual Stages
-
-Each pipeline stage can be used independently:
+### V2 Modules Standalone
 
 ```python
-from aml_toolkit.core.config import ToolkitConfig
+from aml_toolkit.uncertainty.estimator import UncertaintyEstimator
+from aml_toolkit.uncertainty.conformal import SplitConformalPredictor
+from aml_toolkit.ensemble.greedy_diverse import GreedyDiverseEnsemble
+from aml_toolkit.core.config import UncertaintyConfig, DynamicEnsembleConfig
+
+# Conformal prediction sets
+predictor = SplitConformalPredictor(coverage=0.9)
+predictor.fit(proba_cal, y_cal)
+sets = predictor.predict_sets(proba_test)   # list[list[int]]
+coverage = predictor.empirical_coverage(proba_test, y_test)
+
+# Uncertainty estimation
+estimator = UncertaintyEstimator(UncertaintyConfig(
+    enabled=True, methods=["entropy", "margin"], conformal_enabled=True
+))
+report = estimator.estimate("my_model", proba, y_val=y_val)
+print(report.mean_uncertainty, report.mean_prediction_set_size)
+
+# Diversity-aware ensemble selection
+ensemble = GreedyDiverseEnsemble(DynamicEnsembleConfig(max_members=3, diversity_threshold=0.05))
+report = ensemble.select({"rf": proba_rf, "xgb": proba_xgb, "lr": proba_lr}, y_val)
+print(report.member_ids, report.diversity_score)
+```
+
+### Individual Pipeline Stages
+
+```python
 from aml_toolkit.intake.dataset_intake_manager import run_intake
 from aml_toolkit.profiling.profiler_engine import run_profiling
 from aml_toolkit.audit.split_auditor import run_split_audit
 
 config = ToolkitConfig(dataset={"path": "data.csv", "target_column": "label"})
-
-# Run intake only
 intake = run_intake(config)
+
 print(intake.manifest.modality)    # ModalityType.TABULAR
 print(intake.manifest.task_type)   # TaskType.BINARY
 
-# Run audit on the splits
 audit = run_split_audit(
     data=intake.data,
     manifest=intake.manifest,
@@ -508,7 +658,6 @@ audit = run_split_audit(
 )
 print(audit.passed)                # True if no leakage detected
 
-# Profile the data
 profile = run_profiling(
     data=intake.data,
     manifest=intake.manifest,
@@ -518,27 +667,30 @@ profile = run_profiling(
 print(profile.risk_flags)          # [RiskFlag.CLASS_IMBALANCE, ...]
 ```
 
+---
+
 ## Running Tests
 
 ```bash
-# Run all tests
-python -m pytest tests/ -v
+# All tests
+pytest tests/ -v
 
-# Run unit tests only
-python -m pytest tests/unit/ -v
+# Unit tests only
+pytest tests/unit/ -v
 
-# Run integration tests only
-python -m pytest tests/integration/ -v
+# Integration tests only
+pytest tests/integration/ -v
 
-# Run with coverage
-python -m pytest tests/ --cov=aml_toolkit --cov-report=term-missing
+# With coverage
+pytest tests/ --cov=aml_toolkit --cov-report=term-missing
 ```
 
-The test suite includes 427 tests across 26 files:
-- **Unit tests** (22 files) — per-module contract verification including image adapters, GradCAM, and feature extraction
-- **Regression tests** — guard against integration regressions across all phases
-- **Integration tests** — multi-stage data flow on real synthetic datasets, including full image pipeline (embedding_head and CNN paths)
-- **End-to-end sanity suite** — 15 mandatory edge cases including leakage detection, resource abstention, noise-blocked oversampling, and augmentation guard
+The test suite contains **598 tests** across 32 files:
+
+- **Unit tests** (28 files) — per-module contract verification including V2 modules (uncertainty, ensemble diversity, meta-policy, run history, experiment planner, config expansion)
+- **Integration tests** (4 files) — multi-stage data flow, V2 sanity checks (all-off regression, constraint enforcement, graceful degradation), and benchmark tests (coverage guarantees, diversity vs single model)
+
+---
 
 ## Project Structure
 
@@ -555,20 +707,47 @@ src/aml_toolkit/
   models/           Model registry + adapters (logistic, RF, XGBoost, MLP, CNN, ViT)
   runtime/          Training executor, warm-up policies, runtime decision engine
   calibration/      Temperature scaling, isotonic regression, threshold optimization
-  ensemble/         Soft voting, weighted averaging, marginal gain evaluation
+  ensemble/         Soft voting, weighted averaging, diversity-aware greedy pruning (V2)
   explainability/   Feature importance, SHAP, GradCAM, confusion heatmaps, faithfulness
-  reporting/        JSON and Markdown report builders
+  reporting/        JSON and Markdown report builders, plot generation
   orchestration/    Pipeline orchestrator, state machine, audit logger
-  api/              CLI entrypoint
+  api/              CLI entrypoint (Typer)
   utils/            Serialization, resource guard, image feature extraction
+
+  — V2 Adaptive Intelligence —
+  adaptive/         AdaptiveIntelligenceCoordinator (unified V2 entry point)
+  history/          Run history store + dataset signature builder
+  uncertainty/      Entropy, margin, split-conformal prediction sets
+  meta_policy/      Cosine-similarity history-based candidate ordering
+  planning/         Rule engine + experiment planner (optional LLM)
+
+configs/
+  default.yaml
+  modes/            conservative, balanced, aggressive, interpretable
+  profiles/         conservative, balanced, advanced, research (V2 presets)
+
+knowledge/          Design docs, planning artifacts (gitignored)
+tests/
+  unit/             28 unit test files
+  integration/      4 integration test files
 ```
+
+---
 
 ## Design Documents
 
-- `plan.md` — Phase-by-phase execution playbook (15 implementation phases)
-- `system_design.md` — System architecture, component design, data flow, and state machine
-- `CONTRIBUTING.md` — Coding conventions, naming rules, and development guidelines
-- `ARTIFACTS.md` — Artifact directory conventions and output standards
+Design docs live in `knowledge/` (gitignored — local only):
+
+| File | Contents |
+|------|----------|
+| `knowledge/plan.md` | 15-phase implementation playbook |
+| `knowledge/system_design.md` | Architecture, data flow, state machine |
+| `knowledge/ARTIFACTS.md` | Artifact naming and output standards |
+| `knowledge/phase2-plan-improved.md` | V2 Adaptive Intelligence design decisions |
+
+Also see `CONTRIBUTING.md` for coding conventions, naming rules, and development guidelines.
+
+---
 
 ## License
 

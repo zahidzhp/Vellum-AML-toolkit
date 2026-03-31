@@ -28,3 +28,4 @@ class FinalReport(BaseModel):
     final_recommendation: str = ""
     stages_completed: list[PipelineStage] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    plot_paths: dict[str, str] = Field(default_factory=dict)

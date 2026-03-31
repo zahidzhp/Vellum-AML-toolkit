@@ -141,6 +141,87 @@ class ComputeConfig(BaseModel):
     resource_abstention_on_oom: bool = True
 
 
+class RunHistoryConfig(BaseModel):
+    """Run history persistence settings."""
+
+    enabled: bool = False
+    store_path: str = "~/.aml_toolkit/run_history.jsonl"
+    max_records: int = 1000
+
+
+class UncertaintyConfig(BaseModel):
+    """Uncertainty estimation settings."""
+
+    enabled: bool = False
+    methods: list[str] = Field(default_factory=lambda: ["entropy", "margin"])
+    aggregation: str = "mean"
+    abstain_if_above: float = 0.8
+    affects_ranking: bool = False
+    use_calibrated_proba: bool = True
+    conformal_enabled: bool = False
+    conformal_coverage: float = 0.9
+    use_cross_val: bool = False
+    cross_val_folds: int = 5
+
+
+class DynamicEnsembleConfig(BaseModel):
+    """Dynamic ensemble selection settings."""
+
+    enabled: bool = False
+    allowed_modes: list[str] = Field(default_factory=lambda: ["greedy_diverse"])
+    max_members: int = 4
+    allow_per_sample: bool = False
+    min_evidence_models: int = 3
+    diversity_threshold: float = 0.05
+    use_uncertainty_weights: bool = False
+
+
+class MetaPolicyConfig(BaseModel):
+    """Meta-policy engine settings."""
+
+    enabled: bool = False
+    exploration_weight: float = 0.3
+    allow_skip_low_value: bool = True
+    allow_reorder_only: bool = True
+    never_override_user_constraints: bool = True
+    compute_budget_aware: bool = True
+    similarity_method: str = "cosine"
+    recency_decay: float = 0.9
+
+
+class AgenticPlannerConfig(BaseModel):
+    """Agentic experiment planner settings."""
+
+    enabled: bool = False
+    mode: str = "propose_only"
+    max_suggestions: int = 3
+    allow_data_review_requests: bool = False
+    allow_abstention_recommendation: bool = True
+    llm_enhanced: bool = False
+    track_proposal_outcomes: bool = True
+
+
+class VersionFeaturesConfig(BaseModel):
+    """Feature flags for V2 adaptive intelligence modules."""
+
+    uncertainty: bool = False
+    dynamic_ensemble: bool = False
+    meta_policy: bool = False
+    agentic_planner: bool = False
+    run_history: bool = False
+
+
+class AdvancedConfig(BaseModel):
+    """Advanced V2 adaptive intelligence configuration."""
+
+    run_history: RunHistoryConfig = Field(default_factory=RunHistoryConfig)
+    uncertainty: UncertaintyConfig = Field(default_factory=UncertaintyConfig)
+    dynamic_ensemble: DynamicEnsembleConfig = Field(default_factory=DynamicEnsembleConfig)
+    meta_policy: MetaPolicyConfig = Field(default_factory=MetaPolicyConfig)
+    agentic_planner: AgenticPlannerConfig = Field(default_factory=AgenticPlannerConfig)
+    version_features: VersionFeaturesConfig = Field(default_factory=VersionFeaturesConfig)
+
+
 class ToolkitConfig(BaseModel):
     """Top-level toolkit configuration combining all sections."""
 
@@ -158,6 +239,7 @@ class ToolkitConfig(BaseModel):
     explainability: ExplainabilityConfig = Field(default_factory=ExplainabilityConfig)
     reporting: ReportingConfig = Field(default_factory=ReportingConfig)
     compute: ComputeConfig = Field(default_factory=ComputeConfig)
+    advanced: AdvancedConfig = Field(default_factory=AdvancedConfig)
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:

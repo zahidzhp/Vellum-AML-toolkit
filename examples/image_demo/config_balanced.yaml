@@ -1,0 +1,12 @@
+mode: BALANCED
+seed: 42
+
+candidates:
+  allowed_families:
+    - embedding_head
+  max_candidates: 1
+  feature_extractor_backbone: resnet18
+
+compute:
+  max_training_time_seconds: 120
+  gpu_enabled: false

@@ -183,12 +183,25 @@ def build_candidate_portfolio(
         else:
             warmup = max(warmup, config.runtime_decision.min_warmup_epochs_default)
 
-        candidate_id = f"{family_name}_001"
+        # Resolve backbone name for families that have one
+        backbone: str | None = None
+        if family_name == "cnn":
+            backbone = config.candidates.cnn_backbone
+        elif family_name == "vit":
+            backbone = config.candidates.vit_backbone
+
+        # Build candidate ID with backbone if available
+        if backbone:
+            candidate_id = f"{family_name}_{backbone}_001"
+        else:
+            candidate_id = f"{family_name}_001"
+
         candidates.append(
             CandidateEntry(
                 candidate_id=candidate_id,
                 model_family=family_name,
                 model_name=meta.display_name,
+                backbone=backbone,
                 warmup_epochs=warmup,
                 budget_allocation=1.0,  # will be normalized below
             )

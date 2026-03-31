@@ -1,0 +1,15 @@
+# Balanced profile — run history + uncertainty enabled, others off
+mode: BALANCED
+
+advanced:
+  run_history:
+    enabled: true
+  uncertainty:
+    enabled: true
+    use_calibrated_proba: true
+  version_features:
+    uncertainty: true
+    run_history: true
+    dynamic_ensemble: false
+    meta_policy: false
+    agentic_planner: false

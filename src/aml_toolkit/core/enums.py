@@ -87,6 +87,7 @@ class AbstentionReason(str, Enum):
     RESOURCE_EXHAUSTED = "RESOURCE_EXHAUSTED"
     NO_ROBUST_MODEL = "NO_ROBUST_MODEL"
     CRITICAL_FAILURE = "CRITICAL_FAILURE"
+    HIGH_UNCERTAINTY = "HIGH_UNCERTAINTY"
 
 
 class SplitStrategy(str, Enum):

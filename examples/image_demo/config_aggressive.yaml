@@ -1,0 +1,17 @@
+mode: AGGRESSIVE
+seed: 42
+
+candidates:
+  allowed_families:
+    - embedding_head
+    - cnn
+  max_candidates: 2
+  cnn_backbone: resnet18
+  feature_extractor_backbone: resnet18
+
+runtime_decision:
+  min_warmup_epochs_neural: 2
+
+compute:
+  max_training_time_seconds: 300
+  gpu_enabled: false
