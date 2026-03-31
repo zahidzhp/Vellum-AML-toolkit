@@ -734,21 +734,6 @@ tests/
 
 ---
 
-## Design Documents
-
-Design docs live in `knowledge/` (gitignored — local only):
-
-| File | Contents |
-|------|----------|
-| `knowledge/plan.md` | 15-phase implementation playbook |
-| `knowledge/system_design.md` | Architecture, data flow, state machine |
-| `knowledge/ARTIFACTS.md` | Artifact naming and output standards |
-| `knowledge/phase2-plan-improved.md` | V2 Adaptive Intelligence design decisions |
-
-Also see `CONTRIBUTING.md` for coding conventions, naming rules, and development guidelines.
-
----
-
 ## License
 
 MIT
